@@ -16,5 +16,6 @@ jobs:
       - run: uv sync --frozen --extra dev
       - run: uv run ruff check .
       - run: uv run mypy
-      - run: uv run pytest --cov=clusterbuster --cov-report=term-missing
-      - run: docker build -t clusterbuster:test .
+      - run: uv run pytest --cov=clustbuster --cov-report=term-missing
+      - run: docker build -t clustbuster:test .
+      - run: scripts/container_smoke.sh clustbuster:test

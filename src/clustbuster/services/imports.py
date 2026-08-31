@@ -19,6 +19,8 @@ class UploadError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class SessionFiles:
+    workspace_root: Path
+    session_id: str
     root: Path
     uploads: Path
     cache: Path
@@ -27,13 +29,26 @@ class SessionFiles:
 
     @classmethod
     def create(cls, workspace_root: Path) -> SessionFiles:
-        root = workspace_root.resolve() / uuid4().hex
+        resolved_workspace_root = workspace_root.resolve()
+        session_id = uuid4().hex
+        root = resolved_workspace_root / session_id
         paths = [root / name for name in ("uploads", "cache", "state", "exports")]
         for path in paths:
             path.mkdir(parents=True, mode=0o700, exist_ok=False)
-        return cls(root=root, uploads=paths[0], cache=paths[1], state=paths[2], exports=paths[3])
+        return cls(
+            workspace_root=resolved_workspace_root,
+            session_id=session_id,
+            root=root,
+            uploads=paths[0],
+            cache=paths[1],
+            state=paths[2],
+            exports=paths[3],
+        )
 
     def cleanup(self) -> None:
+        expected_root = self.workspace_root / self.session_id
+        if self.root != expected_root or self.root.parent != self.workspace_root:
+            raise RuntimeError("Refusing to clean a workspace outside its session boundary")
         if self.root.exists():
             shutil.rmtree(self.root)
 

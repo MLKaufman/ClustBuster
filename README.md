@@ -3,8 +3,8 @@
 ![ClustBuster logo](img/clustbuster-logo.png)
 
 ClustBuster is a Python-first web application for assisted annotation of
-single-cell RNA-sequencing clusters. The current implementation is an early
-Phase 0 foundation; the supported MVP input will be H5AD.
+single-cell RNA-sequencing clusters. The current AnnData-native MVP supports
+H5AD input.
 
 ## Development
 
@@ -15,6 +15,13 @@ uv sync --extra dev
 uv run pytest
 uv run ruff check .
 uv run shiny run --reload src/clustbuster/app.py
+```
+
+Container verification is available with:
+
+```bash
+docker build -t clustbuster:test .
+scripts/container_smoke.sh clustbuster:test
 ```
 
 The application is intentionally session-scoped. Uploaded data will live in an
@@ -35,6 +42,7 @@ exports before the session or container is removed.
 - Import and resource-provider protocols
 - Configuration from a single validated startup object
 - Shiny application and non-root Docker image
+- Automated independent-session and hardened-container smoke tests
 
 Manual fixtures are documented in `testdata/`. Seurat and SingleCellExperiment RDS
 round-tripping is not currently supported.
