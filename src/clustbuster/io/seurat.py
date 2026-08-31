@@ -6,6 +6,7 @@ import warnings as python_warnings
 from pathlib import Path
 from typing import Any
 
+import anndata as ad
 import h5py  # type: ignore[import-untyped]
 import numpy as np
 import readseurat
@@ -75,8 +76,8 @@ def _inspect_h5seurat(path: Path) -> tuple[str, list[str]]:
     return active_assay, [name for name in assay_names if name != active_assay]
 
 
-def _recover_rds_metadata(path: Path) -> tuple[tuple[str, ...], str, Any]:
-    """Recover Assay5 coordinates that readseurat 0.1.0 converts as booleans."""
+def _read_rds_source(path: Path) -> tuple[str, Any]:
+    """Decode the source once for strict class and assay inspection."""
 
     try:
         from readseurat.rdata import read_rds
@@ -96,18 +97,93 @@ def _recover_rds_metadata(path: Path) -> tuple[tuple[str, ...], str, Any]:
         assays = source_data.get("assays")
         if not active_assay or not isinstance(assays, dict) or active_assay not in assays:
             raise SeuratImportError("The Seurat object has no readable active assay")
-        features = _coordinate_names(getattr(assays[active_assay], "features", None))
-        if not features:
-            raise SeuratImportError("The active assay has no feature-name coordinate")
-        return features, active_assay, source
+        return active_assay, source
     except SeuratImportError:
         raise
     except Exception as exc:
         raise SeuratImportError(
-            "The RDS could not be decoded as a supported in-memory Seurat v5 object. "
+            "The RDS could not be decoded as a supported in-memory Seurat v4/v5 object. "
             "On-disk layers, custom S4 extensions, and non-Seurat RDS files are not supported "
             f"({type(exc).__name__})."
         ) from exc
+
+
+def _legacy_assay_features(assay: Any) -> tuple[str, ...]:
+    metadata = assay.__dict__.get("meta.features")
+    index = getattr(metadata, "index", None)
+    return tuple(str(value) for value in index) if index is not None else ()
+
+
+def _convert_legacy_seurat(source: Any, active_assay: str) -> tuple[ad.AnnData, list[str]]:
+    """Convert the tested Seurat v4 Assay representation without guessing identifiers."""
+
+    source_data = source.__dict__
+    assays = source_data.get("assays", {})
+    assay = assays[active_assay]
+    assay_data = assay.__dict__
+    obs = source_data.get("meta.data")
+    var = assay_data.get("meta.features")
+    if obs is None or var is None:
+        raise SeuratImportError("The legacy Seurat object is missing meta.data or meta.features")
+
+    cells = tuple(str(value) for value in obs.index)
+    features = _legacy_assay_features(assay)
+    if not cells or len(cells) != len(set(cells)):
+        raise SeuratImportError("The legacy Seurat object has missing or duplicate cell IDs")
+    if not features or len(features) != len(set(features)):
+        raise SeuratImportError("The legacy active assay has missing or duplicate feature IDs")
+
+    counts = assay_data.get("counts")
+    normalized = assay_data.get("data")
+    primary = (
+        normalized
+        if getattr(normalized, "shape", None) == (len(features), len(cells))
+        else counts
+    )
+    if getattr(primary, "shape", None) != (len(features), len(cells)):
+        raise SeuratImportError("The legacy active assay matrix does not match its identifiers")
+
+    adata = ad.AnnData(X=primary.T, obs=obs.copy(), var=var.copy())
+    if getattr(counts, "shape", None) == (len(features), len(cells)):
+        adata.layers["counts"] = counts.T
+
+    unsupported: list[str] = []
+    target_features = set(features)
+    for raw_name, secondary in assays.items():
+        assay_name = str(raw_name)
+        if assay_name == active_assay:
+            continue
+        secondary_features = _legacy_assay_features(secondary)
+        secondary_data = secondary.__dict__
+        if set(secondary_features) != target_features or len(secondary_features) != len(features):
+            unsupported.append(
+                f"Non-active assay {assay_name!r} has a different cell or feature space"
+            )
+            continue
+        positions = {name: index for index, name in enumerate(secondary_features)}
+        feature_order = [positions[name] for name in features]
+        for layer_name in ("counts", "data"):
+            matrix = secondary_data.get(layer_name)
+            if getattr(matrix, "shape", None) != (len(features), len(cells)):
+                unsupported.append(
+                    f"Non-active assay {assay_name!r} layer {layer_name!r} has an "
+                    "incompatible shape"
+                )
+                continue
+            adata.layers[f"assay:{assay_name}:{layer_name}"] = matrix[feature_order, :].T
+
+    reductions = source_data.get("reductions", {})
+    cell_positions = {name: index for index, name in enumerate(cells)}
+    for raw_name, reduction in reductions.items():
+        values = reduction.__dict__.get("cell.embeddings")
+        reduction_cells = _coordinate_names(values)
+        if set(reduction_cells) != set(cells) or len(reduction_cells) != len(cells):
+            unsupported.append(f"Reduction {str(raw_name)!r} does not align to cell IDs")
+            continue
+        reduction_positions = {name: index for index, name in enumerate(reduction_cells)}
+        order = [reduction_positions[name] for name in cell_positions]
+        adata.obsm[f"X_{str(raw_name).lower()}"] = np.asarray(values)[order, :]
+    return adata, unsupported
 
 
 def _map_secondary_assays(
@@ -208,27 +284,47 @@ class SeuratImporter:
                     for name in non_active_assays
                 )
             else:
-                features, active_assay, source_object = _recover_rds_metadata(path)
-                with python_warnings.catch_warnings():
-                    python_warnings.simplefilter("ignore")
-                    adata = readseurat.read_seurat(str(path))
-                if len(features) != adata.n_vars or not all(features):
-                    raise SeuratImportError(
-                        "The active assay feature map is missing or does not match the matrix"
+                active_assay, source_object = _read_rds_source(path)
+                source_assay = source_object.__dict__["assays"][active_assay]
+                assay_class = _first_string(source_assay.__dict__.get("class"))
+                if assay_class == "Assay":
+                    adata, unsupported_assays = _convert_legacy_seurat(
+                        source_object, active_assay
                     )
-                if tuple(str(name) for name in adata.var_names) != features:
-                    adata.var_names = list(features)
+                    unsupported.extend(unsupported_assays)
                     report_warnings.append(
-                        "Recovered Seurat v5 feature identifiers from the Assay5 coordinate map"
+                        "Imported legacy Seurat v4 Assay through the compatibility converter"
                     )
+                elif assay_class == "Assay5":
+                    features = _coordinate_names(getattr(source_assay, "features", None))
+                    if not features:
+                        raise SeuratImportError(
+                            "The active assay has no feature-name coordinate"
+                        )
+                    with python_warnings.catch_warnings():
+                        python_warnings.simplefilter("ignore")
+                        adata = readseurat.read_seurat(str(path))
+                    if len(features) != adata.n_vars or not all(features):
+                        raise SeuratImportError(
+                            "The active assay feature map is missing or does not match the matrix"
+                        )
+                    if tuple(str(name) for name in adata.var_names) != features:
+                        adata.var_names = list(features)
+                        report_warnings.append(
+                            "Recovered Seurat v5 feature identifiers from the Assay5 coordinate map"
+                        )
 
-                mapped_layers, unsupported_assays = _map_secondary_assays(
-                    source_object, active_assay, adata
-                )
-                unsupported.extend(unsupported_assays)
-                if mapped_layers:
-                    report_warnings.append(
-                        f"Mapped {len(mapped_layers)} compatible secondary-assay layer(s)"
+                    mapped_layers, unsupported_assays = _map_secondary_assays(
+                        source_object, active_assay, adata
+                    )
+                    unsupported.extend(unsupported_assays)
+                    if mapped_layers:
+                        report_warnings.append(
+                            f"Mapped {len(mapped_layers)} compatible secondary-assay layer(s)"
+                        )
+                else:
+                    raise SeuratImportError(
+                        f"The active assay class {assay_class or 'unknown'!r} is not supported"
                     )
 
             validate_adata(adata)
@@ -239,7 +335,8 @@ class SeuratImporter:
         except Exception as exc:
             raise SeuratImportError(
                 "The file could not be imported as a supported Seurat object. ClustBuster "
-                "currently supports in-memory Seurat v5 RDS objects and standard H5Seurat "
+                "currently supports tested in-memory Seurat v4/v5 RDS objects and standard "
+                "H5Seurat "
                 f"files ({type(exc).__name__})."
             ) from exc
 

@@ -11,6 +11,7 @@ from clustbuster.services.exports import ANNOTATION_COLUMN, PROVENANCE_KEY, Work
 from clustbuster.services.workspaces import configure_workspace
 
 FIXTURE = Path(__file__).parents[2] / "testdata" / "so.rds"
+V4_FIXTURE = Path(__file__).parents[2] / "testdata" / "so-v4.rds"
 H5SEURAT_FIXTURE = Path(__file__).parents[2] / "testdata" / "so.h5seurat"
 
 
@@ -51,6 +52,29 @@ def test_probe_recognizes_compressed_rds_fixture() -> None:
     assert result.confidence == 0.8
 
 
+def test_load_genuine_seurat_v4_fixture() -> None:
+    result = SeuratImporter().load(V4_FIXTURE)
+
+    assert result.report.source_format is ObjectFormat.SEURAT
+    assert result.adata.shape == (24, 6)
+    assert list(result.adata.obs_names) == [f"v4-cell-{index:03d}" for index in range(1, 25)]
+    assert list(result.adata.var_names) == ["CD3D", "IL7R", "LYZ", "S100A8", "MS4A1", "NKG7"]
+    assert result.adata.obs["seurat_clusters"].tolist() == ["0"] * 8 + ["1"] * 8 + ["2"] * 8
+    assert result.report.candidate_cluster_columns[0] == "seurat_clusters"
+    assert result.report.embeddings == ("X_umap",)
+    assert set(result.adata.layers) == {
+        "counts",
+        "assay:ALT:counts",
+        "assay:ALT:data",
+    }
+    assert sparse.issparse(result.adata.X)
+    assert (result.adata.layers["assay:ALT:counts"] != result.adata.layers["counts"] * 2).nnz == 0
+    assert any("legacy Seurat v4 Assay" in item for item in result.report.warnings)
+    assert result.report.unsupported_components == [
+        "Non-active assay 'ADT' has a different cell or feature space"
+    ]
+
+
 def test_load_h5seurat_fixture() -> None:
     result = SeuratImporter().load(H5SEURAT_FIXTURE)
 
@@ -73,11 +97,57 @@ def test_probe_recognizes_h5seurat_fixture() -> None:
     assert result.confidence == 1.0
 
 
+def test_h5seurat_annotation_and_h5ad_export_round_trip(tmp_path: Path) -> None:
+    source_bytes = H5SEURAT_FIXTURE.read_bytes()
+    workspace = workspace_from_import(SeuratImporter().load(H5SEURAT_FIXTURE))
+    configure_workspace(
+        workspace,
+        cluster_column="seurat_clusters",
+        embedding_key="X_umap",
+        expression_source=workspace.expression_source,
+    )
+    workspace.annotations.assign("0", "T cell")
+
+    artifact = WorkspaceExportService().export_h5ad(workspace, tmp_path).artifacts[0]
+
+    exported = ad.read_h5ad(artifact.path)
+    assert exported.obs[ANNOTATION_COLUMN].iloc[:4].tolist() == ["T cell"] * 4
+    assert exported.uns[PROVENANCE_KEY]["source_format"] == "seurat"
+    assert list(exported.var_names) == list(workspace.adata.var_names)
+    assert set(exported.layers) == {"counts"}
+    assert H5SEURAT_FIXTURE.read_bytes() == source_bytes
+
+
 def test_non_seurat_rds_has_actionable_error(tmp_path: Path) -> None:
     path = tmp_path / "not-seurat.rds"
     path.write_bytes(b"not an R object")
-    with pytest.raises(SeuratImportError, match="supported in-memory Seurat v5"):
+    with pytest.raises(SeuratImportError, match="supported in-memory Seurat v4/v5"):
         SeuratImporter().load(path)
+
+
+def test_seurat_v4_annotation_and_h5ad_export_round_trip(tmp_path: Path) -> None:
+    source_bytes = V4_FIXTURE.read_bytes()
+    workspace = workspace_from_import(SeuratImporter().load(V4_FIXTURE))
+    configure_workspace(
+        workspace,
+        cluster_column="seurat_clusters",
+        embedding_key="X_umap",
+        expression_source=workspace.expression_source,
+    )
+    workspace.annotations.assign("0", "T cell")
+
+    artifact = WorkspaceExportService().export_h5ad(workspace, tmp_path).artifacts[0]
+
+    exported = ad.read_h5ad(artifact.path)
+    assert exported.obs[ANNOTATION_COLUMN].iloc[:8].tolist() == ["T cell"] * 8
+    assert exported.uns[PROVENANCE_KEY]["source_format"] == "seurat"
+    assert list(exported.var_names) == list(workspace.adata.var_names)
+    assert set(exported.layers) == {
+        "counts",
+        "assay:ALT:counts",
+        "assay:ALT:data",
+    }
+    assert V4_FIXTURE.read_bytes() == source_bytes
 
 
 def test_seurat_annotation_and_h5ad_export_round_trip(tmp_path: Path) -> None:
