@@ -67,10 +67,13 @@ def _styles() -> ui.Tag:
         """
         :root { --cb-navy: #19324a; --cb-teal: #2d8c88; --cb-bg: #f4f7f8; }
         body { background: var(--cb-bg); color: var(--cb-navy); }
-        .cb-header { display:flex; align-items:center; gap:.8rem; padding:.65rem 1rem; }
-        .cb-logo { width:62px; height:62px; border-radius:14px; }
+        .cb-workspace-brand { display:flex; align-items:center; gap:.8rem; padding:.15rem 0 1rem;
+                              margin-bottom:1rem; border-bottom:1px solid #dbe4e8; }
+        .cb-logo { width:72px; height:72px; border-radius:16px; flex:0 0 auto; }
         .cb-title { margin:0; font-size:1.55rem; font-weight:700; }
         .cb-subtitle { margin:0; color:#607180; font-size:.88rem; }
+        .cb-version { display:block; margin-top:.2rem; color:#607180; font-size:.78rem;
+                      font-weight:600; letter-spacing:.03em; }
         .cb-empty { min-height:420px; display:flex; align-items:center; justify-content:center;
                     flex-direction:column; color:#6a7c89; text-align:center; padding:3rem; }
         .cb-summary { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.6rem; }
@@ -93,18 +96,21 @@ def _styles() -> ui.Tag:
 
 app_ui = ui.page_fillable(
     _styles(),
-    ui.tags.header(
-        ui.tags.img(
-            src="/assets/clustbuster-logo.png", class_="cb-logo", alt="ClustBuster logo"
-        ),
-        ui.tags.div(
-            ui.h1("ClustBuster", class_="cb-title"),
-            ui.p("Assisted single-cell cluster annotation", class_="cb-subtitle"),
-        ),
-        class_="cb-header",
-    ),
     ui.layout_sidebar(
         ui.sidebar(
+            ui.div(
+                ui.tags.img(
+                    src="/assets/clustbuster-logo.png",
+                    class_="cb-logo",
+                    alt="ClustBuster logo",
+                ),
+                ui.div(
+                    ui.h1("ClustBuster", class_="cb-title"),
+                    ui.p("Assisted single-cell cluster annotation", class_="cb-subtitle"),
+                    ui.tags.span(f"Version {__version__}", class_="cb-version"),
+                ),
+                class_="cb-workspace-brand",
+            ),
             ui.input_file(
                 "dataset",
                 "Upload single-cell object",
@@ -113,6 +119,12 @@ app_ui = ui.page_fillable(
                 placeholder="No dataset selected",
             ),
             ui.output_ui("import_panel"),
+            ui.input_select(
+                "color_by",
+                "Color embedding by",
+                {"cluster": "Source cluster", "annotation": "Current annotation"},
+                selected="cluster",
+            ),
             title="Workspace",
             width=330,
             open="desktop",
@@ -121,16 +133,6 @@ app_ui = ui.page_fillable(
             ui.nav_panel(
                 "Overview",
                 ui.output_ui("overview_header"),
-                ui.card(
-                    ui.card_header("Embedding controls"),
-                    ui.input_select(
-                        "color_by",
-                        "Color embedding by",
-                        {"cluster": "Source cluster", "annotation": "Current annotation"},
-                        selected="cluster",
-                    ),
-                    fill=False,
-                ),
                 output_widget("embedding_plot", height="580px"),
             ),
             ui.nav_panel(
@@ -384,35 +386,17 @@ app_ui = ui.page_fillable(
             ),
             sidebar=ui.sidebar(
                 ui.output_ui("annotation_sidebar_status"),
-                ui.input_select("annotation_cluster", "Selected cluster", {}),
-                ui.input_text(
-                    "annotation_label",
-                    "Annotation",
-                    placeholder="e.g. CD4 T cell",
-                ),
-                ui.input_action_button(
-                    "save_annotation", "Save annotation", class_="btn-primary w-100"
-                ),
                 ui.div(
                     ui.input_action_button("undo_annotation", "Undo"),
                     ui.input_action_button("redo_annotation", "Redo"),
                     class_="cb-annotation-actions",
                 ),
-                ui.div(
-                    ui.input_action_button(
-                        "reset_selected_annotation", "Reset selected"
-                    ),
-                    ui.input_action_button(
-                        "reset_all_annotations", "Reset all"
-                    ),
-                    class_="cb-annotation-actions",
-                ),
                 ui.input_action_button(
-                    "save_annotation_table", "Save table edits", class_="w-100"
+                    "reset_all_annotations", "Reset all annotations", class_="w-100"
                 ),
                 ui.help_text(
-                    "Edit labels or notes directly below, then save the table as one "
-                    "undoable change. Up to 50 changes can be undone."
+                    "Edit labels or notes directly in the table. Changes save automatically "
+                    "when you leave a field. Up to 50 changes can be undone."
                 ),
                 ui.output_ui("annotation_table"),
                 title="Annotations",
@@ -422,7 +406,6 @@ app_ui = ui.page_fillable(
                 class_="cb-annotation-sidebar",
                 fillable=True,
             ),
-            title=ui.tags.span(f"AnnData MVP · v{__version__}"),
             full_screen=True,
         ),
         fillable=True,
@@ -562,18 +545,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 record.cluster_id.serialized: record.cluster_id.display
                 for record in current.annotations.records()
             }
-            selected_cluster = next(iter(cluster_choices))
-            ui.update_select(
-                "annotation_cluster",
-                choices=cluster_choices,
-                selected=selected_cluster,
-                session=session,
-            )
-            ui.update_text(
-                "annotation_label",
-                value=current.annotations.get_serialized(selected_cluster).annotation,
-                session=session,
-            )
             ui.update_select("marker_cluster", choices=cluster_choices, session=session)
             configured.set(True)
             feature_result.set(None)
@@ -628,7 +599,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         revision.get()
         return ui.div(
             ui.strong(f"{len(current.annotations):,} source clusters"),
-            ui.p("Edits apply across every cell in the selected cluster."),
+            ui.p("Table edits save automatically and apply to every cell in the cluster."),
             class_="alert alert-info",
         )
 
@@ -643,12 +614,18 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 ui.tags.td(record.cluster_id.display),
                 ui.tags.td(
                     ui.input_text(
-                        f"annotation_cell_{index}", "", value=record.annotation
+                        f"annotation_cell_{index}",
+                        "",
+                        value=record.annotation,
+                        update_on="blur",
                     )
                 ),
                 ui.tags.td(
                     ui.input_text(
-                        f"notes_cell_{index}", "", value=record.notes or ""
+                        f"notes_cell_{index}",
+                        "",
+                        value=record.notes or "",
+                        update_on="blur",
                     )
                 ),
             )
@@ -679,90 +656,23 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             )
 
     @reactive.effect
-    @reactive.event(input.save_annotation_table)
-    def save_annotation_table() -> None:
+    def autosave_annotation_table() -> None:
         current = workspace.get()
         req(current is not None and configured.get())
         assert current is not None
+        edits: list[tuple[str, str, str]] = []
+        for index, record in enumerate(current.annotations.records()):
+            annotation = input[f"annotation_cell_{index}"]()
+            notes = input[f"notes_cell_{index}"]()
+            req(annotation is not None and notes is not None)
+            edits.append((record.cluster_id.serialized, str(annotation), str(notes)))
         try:
-            edits = [
-                (
-                    record.cluster_id.serialized,
-                    str(input[f"annotation_cell_{index}"]()),
-                    str(input[f"notes_cell_{index}"]()),
-                )
-                for index, record in enumerate(current.annotations.records())
-            ]
             updated = current.annotations.apply_table_edits(edits)
             if updated:
-                revision.set(revision.get() + 1)
-                _refresh_selected_annotation(current)
-                _refresh_annotation_table(current)
-                ui.notification_show(
-                    f"Saved {len(updated)} annotation row(s)",
-                    type="message",
-                    session=session,
-                )
-            else:
-                ui.notification_show("No table changes to save", type="message", session=session)
-        except Exception as exc:
-            ui.notification_show(str(exc), type="error", duration=8, session=session)
-
-    @reactive.effect
-    @reactive.event(input.annotation_cluster, ignore_init=True)
-    def sync_annotation_editor() -> None:
-        current = workspace.get()
-        req(current is not None and configured.get())
-        assert current is not None
-        try:
-            record = current.annotations.get_serialized(str(input.annotation_cluster()))
-        except KeyError:
-            return
-        ui.update_text("annotation_label", value=record.annotation, session=session)
-
-    @reactive.effect
-    @reactive.event(input.save_annotation)
-    def assign_annotation() -> None:
-        annotation_label = str(input.annotation_label()).strip()
-        req(annotation_label)
-        current = workspace.get()
-        req(current is not None and configured.get())
-        assert current is not None
-        try:
-            existing = current.annotations.get_serialized(str(input.annotation_cluster()))
-            current.annotations.assign_serialized(
-                str(input.annotation_cluster()),
-                annotation_label,
-                source="manual",
-                notes=existing.notes,
-            )
-            revision.set(revision.get() + 1)
+                with reactive.isolate():
+                    revision.set(revision.get() + 1)
+        except (KeyError, ValueError) as exc:
             _refresh_annotation_table(current)
-            ui.notification_show("Annotation updated", type="message", session=session)
-        except Exception as exc:
-            ui.notification_show(str(exc), type="error", duration=8, session=session)
-
-    def _refresh_selected_annotation(current: Workspace) -> None:
-        try:
-            record = current.annotations.get_serialized(str(input.annotation_cluster()))
-        except KeyError:
-            return
-        ui.update_text("annotation_label", value=record.annotation, session=session)
-
-    @reactive.effect
-    @reactive.event(input.reset_selected_annotation)
-    def reset_selected_annotation() -> None:
-        current = workspace.get()
-        req(current is not None and configured.get())
-        assert current is not None
-        try:
-            record = current.annotations.get_serialized(str(input.annotation_cluster()))
-            current.annotations.reset([record.cluster_id])
-            revision.set(revision.get() + 1)
-            _refresh_selected_annotation(current)
-            _refresh_annotation_table(current)
-            ui.notification_show("Selected annotation reset", type="message", session=session)
-        except Exception as exc:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @reactive.effect
@@ -773,7 +683,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         assert current is not None
         current.annotations.reset()
         revision.set(revision.get() + 1)
-        _refresh_selected_annotation(current)
         _refresh_annotation_table(current)
         ui.notification_show("All annotations reset", type="message", session=session)
 
@@ -786,7 +695,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         try:
             current.annotations.undo()
             revision.set(revision.get() + 1)
-            _refresh_selected_annotation(current)
             _refresh_annotation_table(current)
             ui.notification_show("Annotation change undone", type="message", session=session)
         except ValueError as exc:
@@ -801,7 +709,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         try:
             current.annotations.redo()
             revision.set(revision.get() + 1)
-            _refresh_selected_annotation(current)
             _refresh_annotation_table(current)
             ui.notification_show("Annotation change redone", type="message", session=session)
         except ValueError as exc:
@@ -1292,17 +1199,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             reference_annotation_applied.set(True)
             revision.set(revision.get() + 1)
             _refresh_annotation_table(current)
-            selected_cluster = str(input.annotation_cluster())
-            try:
-                selected_record = current.annotations.get_serialized(selected_cluster)
-            except KeyError:
-                selected_record = None
-            if selected_record is not None:
-                ui.update_text(
-                    "annotation_label",
-                    value=selected_record.annotation,
-                    session=session,
-                )
             ui.notification_show(
                 f"Applied {len(result.predictions)} reference predictions",
                 type="message",
