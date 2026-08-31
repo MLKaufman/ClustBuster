@@ -13,6 +13,7 @@ from shinywidgets import output_widget, render_plotly
 
 from clustbuster import __version__
 from clustbuster.config import AppConfig
+from clustbuster.core.enrichment import EnrichmentResult
 from clustbuster.core.expression import (
     DotPlotResult,
     ExpressionResult,
@@ -23,9 +24,11 @@ from clustbuster.core.expression import (
 from clustbuster.core.markers import MarkerResult, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
+from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
 from clustbuster.models import ExpressionSource, Workspace
 from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
+from clustbuster.plotting.enrichment import enrichment_figure
 from clustbuster.plotting.feature import feature_figure
 from clustbuster.plotting.heatmap import marker_heatmap_figure
 from clustbuster.plotting.module import module_score_figure
@@ -44,7 +47,7 @@ def _styles() -> ui.Tag:
         :root { --cb-navy: #19324a; --cb-teal: #2d8c88; --cb-bg: #f4f7f8; }
         body { background: var(--cb-bg); color: var(--cb-navy); }
         .cb-header { display:flex; align-items:center; gap:.8rem; padding:.65rem 1rem; }
-        .cb-logo { width:48px; height:48px; border-radius:12px; }
+        .cb-logo { width:62px; height:62px; border-radius:14px; }
         .cb-title { margin:0; font-size:1.55rem; font-weight:700; }
         .cb-subtitle { margin:0; color:#607180; font-size:.88rem; }
         .cb-empty { min-height:420px; display:flex; align-items:center; justify-content:center;
@@ -232,6 +235,37 @@ app_ui = ui.page_fillable(
                 output_widget("marker_heatmap", height="520px"),
             ),
             ui.nav_panel(
+                "Enrichment",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_select(
+                            "enrichment_library",
+                            "Gene-set library",
+                            {DEFAULT_LIBRARY: "GO Biological Process 2025"},
+                        ),
+                        ui.input_numeric(
+                            "enrichment_top_n", "Terms to display", value=12, min=3, max=30
+                        ),
+                        ui.input_action_button(
+                            "run_enrichment", "Run enrichment", class_="btn-primary"
+                        ),
+                        col_widths=(5, 3, 4),
+                    ),
+                    ui.help_text(
+                        "Uses the current ranked marker genes. Running enrichment sends only "
+                        "those gene symbols to the Ma'ayan Lab Enrichr service; expression "
+                        "values and cell metadata are not transmitted."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("enrichment_feedback"),
+                output_widget("enrichment_plot", height="560px"),
+                ui.card(
+                    ui.card_header("Enriched terms"),
+                    ui.output_data_frame("enrichment_table"),
+                ),
+            ),
+            ui.nav_panel(
                 "Export",
                 ui.output_ui("export_status"),
                 ui.card(
@@ -283,6 +317,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     module_error = reactive.Value[str | None](None)
     marker_result = reactive.Value[MarkerResult | None](None)
     marker_error = reactive.Value[str | None](None)
+    enrichment_result = reactive.Value[EnrichmentResult | None](None)
+    enrichment_error = reactive.Value[str | None](None)
+    enrichment_client = EnrichrClient(
+        timeout_seconds=config.enrichment_timeout_seconds
+    )
 
     session.on_ended(session_files.cleanup)
 
@@ -387,6 +426,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             dotplot_result.set(None)
             module_score_result.set(None)
             marker_result.set(None)
+            enrichment_result.set(None)
             revision.set(revision.get() + 1)
             ui.notification_show("Workspace configured", type="message", session=session)
         except Exception as exc:
@@ -662,6 +702,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 min_fraction=float(input.marker_min_fraction()),
             )
             marker_result.set(result)
+            enrichment_result.set(None)
         except Exception as exc:
             marker_result.set(None)
             marker_error.set(str(exc))
@@ -718,6 +759,78 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(result is not None)
         assert result is not None
         return marker_heatmap_figure(result)
+
+    @reactive.effect
+    @reactive.event(input.run_enrichment)
+    def run_go_enrichment() -> None:
+        markers = marker_result.get()
+        req(markers is not None)
+        assert markers is not None
+        enrichment_error.set(None)
+        genes = tuple(markers.values["gene"].astype(str))
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.15, message="Submitting marker genes to Enrichr")
+            try:
+                result = enrichment_client.enrich(
+                    genes,
+                    description=f"ClustBuster cluster {markers.selected_cluster} markers",
+                )
+                enrichment_result.set(result)
+                progress.set(1, message="GO enrichment complete")
+            except Exception as exc:
+                enrichment_result.set(None)
+                enrichment_error.set(str(exc))
+                ui.notification_show(str(exc), type="error", duration=10, session=session)
+
+    @output
+    @render.ui
+    def enrichment_feedback() -> ui.TagChild:
+        error = enrichment_error.get()
+        result = enrichment_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Rank markers first, then run GO Biological Process enrichment.")
+        return ui.div(
+            f"Returned {len(result.values)} GO terms from {result.source} using "
+            f"{len(result.genes)} marker gene(s).",
+            class_="alert alert-success",
+        )
+
+    @output
+    @render_plotly
+    def enrichment_plot() -> Any:
+        result = enrichment_result.get()
+        req(result is not None)
+        assert result is not None
+        return enrichment_figure(result, top_n=int(input.enrichment_top_n()))
+
+    @output
+    @render.data_frame
+    def enrichment_table() -> pd.DataFrame:
+        result = enrichment_result.get()
+        req(result is not None)
+        assert result is not None
+        table = result.values[
+            [
+                "rank",
+                "term",
+                "adjusted_p_value",
+                "odds_ratio",
+                "combined_score",
+                "overlap_genes",
+            ]
+        ].copy()
+        return table.rename(
+            columns={
+                "rank": "Rank",
+                "term": "GO Biological Process",
+                "adjusted_p_value": "Adjusted p-value",
+                "odds_ratio": "Odds ratio",
+                "combined_score": "Combined score",
+                "overlap_genes": "Overlapping genes",
+            }
+        )
 
     @output
     @render.ui

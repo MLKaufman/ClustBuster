@@ -40,6 +40,8 @@ exports before the session or container is removed.
   embedding visualization, and per-cluster summaries
 - Sparse-safe selected-cluster marker ranking with Welch statistics,
   multiple-testing correction, ranked tables, and cluster heatmaps
+- GO Biological Process enrichment through a replaceable Enrichr adapter,
+  with ranked terms and an interactive significance summary
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
@@ -50,3 +52,9 @@ exports before the session or container is removed.
 
 Manual fixtures are documented in `testdata/`. Seurat and SingleCellExperiment RDS
 round-tripping is not currently supported.
+
+GO enrichment is the only current workflow that sends data outside the local
+container. An explicit Run action submits only the displayed marker gene symbols
+and a non-identifying cluster description to the
+[Ma'ayan Lab Enrichr API](https://maayanlab.cloud/Enrichr/); expression values,
+cell identifiers, and observation metadata remain local.

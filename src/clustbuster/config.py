@@ -30,6 +30,7 @@ class AppConfig:
     workspace_root: Path = Path("/tmp/clustbuster")
     max_upload_mb: int = 2048
     cache_limit_mb: int = 1024
+    enrichment_timeout_seconds: int = 20
     log_level: str = "INFO"
     enable_seurat_import: bool = False
     enable_sce_import: bool = False
@@ -52,8 +53,11 @@ class AppConfig:
             cache_limit_mb=_positive_int(
                 os.getenv(f"{prefix}CACHE_LIMIT_MB", "1024"), f"{prefix}CACHE_LIMIT_MB"
             ),
+            enrichment_timeout_seconds=_positive_int(
+                os.getenv(f"{prefix}ENRICHMENT_TIMEOUT_SECONDS", "20"),
+                f"{prefix}ENRICHMENT_TIMEOUT_SECONDS",
+            ),
             log_level=log_level,
             enable_seurat_import=os.getenv(f"{prefix}ENABLE_SEURAT_IMPORT", "0") == "1",
             enable_sce_import=os.getenv(f"{prefix}ENABLE_SCE_IMPORT", "0") == "1",
         )
-
