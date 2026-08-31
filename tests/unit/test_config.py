@@ -7,10 +7,12 @@ def test_config_reads_namespaced_environment(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("CLUSTBUSTER_PORT", "9000")
     monkeypatch.setenv("CLUSTBUSTER_ENRICHMENT_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("CLUSTBUSTER_ENABLE_SEURAT_IMPORT", "1")
+    monkeypatch.setenv("CLUSTBUSTER_ENABLE_SCE_IMPORT", "1")
     config = AppConfig.from_env()
     assert config.port == 9000
     assert config.enrichment_timeout_seconds == 30
     assert config.enable_seurat_import is True
+    assert config.enable_sce_import is True
 
 
 def test_config_rejects_invalid_positive_integers(monkeypatch: pytest.MonkeyPatch) -> None:

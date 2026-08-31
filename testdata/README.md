@@ -17,6 +17,10 @@ using biological or identifying data.
 - `so.h5seurat` — deterministic H5Seurat compatibility fixture produced by the
   pinned `readseurat` writer: 12 cells, five genes, sparse expression and counts,
   three `seurat_clusters`, and a UMAP reduction.
+- `sce.rds` — genuine SingleCellExperiment 1.34.0 object produced with
+  Bioconductor 3.23: 40 cells, eight genes, sparse counts, dense log-counts,
+  four `sce_clusters` groups, a UMAP reduced dimension, and an explicitly reported
+  ADT alternative experiment.
 
 Regenerate the fixtures with:
 
@@ -24,6 +28,7 @@ Regenerate the fixtures with:
 uv run python scripts/create_test_fixtures/generate_h5ad.py
 uv run python scripts/create_test_fixtures/generate_h5seurat.py
 Rscript scripts/create_test_fixtures/generate_rds.R seurat
+Rscript scripts/create_test_fixtures/generate_rds.R sce
 ```
 
 The v4 fixture requires an isolated SeuratObject 4.1.4 library so it cannot be
@@ -32,11 +37,6 @@ accidentally regenerated with the v5 object model:
 ```bash
 R_LIBS=/path/to/seurat-v4-library Rscript scripts/create_test_fixtures/generate_seurat_v4.R
 ```
-
-## Planned compatibility fixtures
-
-- `sce.rds` — genuine SingleCellExperiment object; added when the Phase 4 SCE adapter
-  is built.
 
 The R generator accepts `seurat`, `sce`, or `all` and refuses to create substitute
 files when the corresponding real R package is absent.

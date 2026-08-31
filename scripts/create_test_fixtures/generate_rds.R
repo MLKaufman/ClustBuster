@@ -10,7 +10,7 @@ if (!target %in% c("all", "seurat", "sce")) {
 required <- character()
 if (target %in% c("all", "seurat")) required <- c(required, "SeuratObject")
 if (target %in% c("all", "sce")) {
-  required <- c(required, "SingleCellExperiment", "S4Vectors")
+  required <- c(required, "SingleCellExperiment", "S4Vectors", "Matrix")
 }
 missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) {
@@ -56,10 +56,18 @@ if (target %in% c("all", "seurat")) {
 
 if (target %in% c("all", "sce")) {
   sce <- SingleCellExperiment::SingleCellExperiment(
-    assays = list(counts = counts, logcounts = log1p(counts)),
-    colData = S4Vectors::DataFrame(clustbuster_cluster = clusters)
+    assays = list(counts = Matrix::Matrix(counts, sparse = TRUE), logcounts = log1p(counts)),
+    colData = S4Vectors::DataFrame(sce_clusters = clusters)
   )
   SingleCellExperiment::reducedDim(sce, "UMAP") <- embedding
+  protein_counts <- matrix(
+    rpois(3 * length(cells), lambda = 2),
+    nrow = 3,
+    dimnames = list(c("CD3", "CD14", "CD19"), cells)
+  )
+  SingleCellExperiment::altExp(sce, "ADT") <- SingleCellExperiment::SingleCellExperiment(
+    assays = list(counts = Matrix::Matrix(protein_counts, sparse = TRUE))
+  )
   saveRDS(sce, file.path(root, "testdata", "sce.rds"), version = 3)
   message("Wrote testdata/sce.rds")
 }

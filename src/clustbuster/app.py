@@ -58,6 +58,8 @@ logger = logging.getLogger("clustbuster")
 _upload_accept = [".h5ad", "application/x-hdf5"]
 if config.enable_seurat_import:
     _upload_accept.extend([".rds", ".h5seurat"])
+elif config.enable_sce_import:
+    _upload_accept.append(".rds")
 
 
 def _styles() -> ui.Tag:
@@ -434,6 +436,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     import_service = ImportService(
         config.max_upload_mb,
         enable_seurat_import=config.enable_seurat_import,
+        enable_sce_import=config.enable_sce_import,
     )
     export_service = WorkspaceExportService()
     workspace = reactive.Value[Workspace | None](None)

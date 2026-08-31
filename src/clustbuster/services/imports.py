@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from clustbuster.io.base import ObjectImporter
 from clustbuster.io.h5ad import H5adImporter
+from clustbuster.io.sce import SceImporter
 from clustbuster.io.seurat import SeuratImporter
 from clustbuster.models import ImportOptions, ImportResult, ObjectFormat
 
@@ -56,11 +57,21 @@ class SessionFiles:
 
 
 class ImportService:
-    def __init__(self, max_upload_mb: int, *, enable_seurat_import: bool = False) -> None:
+    def __init__(
+        self,
+        max_upload_mb: int,
+        *,
+        enable_seurat_import: bool = False,
+        enable_sce_import: bool = False,
+    ) -> None:
         self.max_upload_bytes = max_upload_mb * 1024 * 1024
+        self.enable_seurat_import = enable_seurat_import
+        self.enable_sce_import = enable_sce_import
         self.importers: list[ObjectImporter] = [H5adImporter()]
         if enable_seurat_import:
             self.importers.append(SeuratImporter())
+        if enable_sce_import:
+            self.importers.append(SceImporter())
 
     def import_upload(
         self, upload: Mapping[str, Any], session_files: SessionFiles
@@ -89,8 +100,14 @@ class ImportService:
         )
         probe, importer = probes[0]
         if probe.format is ObjectFormat.UNKNOWN or probe.confidence <= 0:
-            supported = "H5AD, Seurat RDS, and H5Seurat" if len(self.importers) > 1 else "H5AD"
-            raise UploadError(f"The upload is not a recognized {supported} file")
+            supported = ["H5AD"]
+            if self.enable_seurat_import:
+                supported.extend(["Seurat RDS", "H5Seurat"])
+            if self.enable_sce_import:
+                supported.append("SingleCellExperiment RDS")
+            raise UploadError(
+                f"The upload is not a recognized {', '.join(supported)} file"
+            )
         result = importer.load(destination, ImportOptions())
         result.report.source_filename = original_name
         return result

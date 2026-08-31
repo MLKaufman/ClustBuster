@@ -87,3 +87,24 @@ def test_import_service_rejects_seurat_when_feature_disabled(tmp_path: Path) -> 
         ImportService(max_upload_mb=10).import_upload(
             {"name": "study.rds", "datapath": str(source)}, session_files
         )
+
+
+def test_import_service_dispatches_enabled_sce_upload(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "testdata" / "sce.rds"
+    session_files = SessionFiles.create(tmp_path / "sessions")
+    result = ImportService(max_upload_mb=10, enable_sce_import=True).import_upload(
+        {"name": "study.rds", "datapath": str(source)}, session_files
+    )
+
+    assert result.report.source_format is ObjectFormat.SINGLE_CELL_EXPERIMENT
+    assert result.report.source_filename == "study.rds"
+    assert len(list(session_files.uploads.glob("*.rds"))) == 1
+
+
+def test_import_service_rejects_sce_when_feature_disabled(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "testdata" / "sce.rds"
+    session_files = SessionFiles.create(tmp_path / "sessions")
+    with pytest.raises(UploadError, match="recognized H5AD"):
+        ImportService(max_upload_mb=10).import_upload(
+            {"name": "study.rds", "datapath": str(source)}, session_files
+        )

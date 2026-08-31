@@ -58,6 +58,16 @@ Manual fixtures are documented in `testdata/`. Imported Seurat objects export as
 and annotated H5AD; native Seurat or SingleCellExperiment RDS write-back is not
 supported.
 
+## SingleCellExperiment compatibility
+
+Set `CLUSTBUSTER_ENABLE_SCE_IMPORT=1` to accept `.rds` files containing tested,
+in-memory SingleCellExperiment objects (enabled by `compose.dev.yml`). All aligned
+assays are preserved as AnnData layers, `logcounts` is preferred as `X`, `colData`
+and `rowData` map to observation and feature metadata, and `reducedDims` map to
+AnnData embeddings. Delayed/on-disk assays, alternative experiments, pair data,
+and custom S4 extensions are outside the current compatibility contract and are
+rejected or reported explicitly. Exports remain CSV and annotated H5AD.
+
 ## Seurat compatibility
 
 Set `CLUSTBUSTER_ENABLE_SEURAT_IMPORT=1` to accept `.rds` and `.h5seurat` uploads

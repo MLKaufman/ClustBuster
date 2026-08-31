@@ -7,6 +7,7 @@ services:
       CLUSTBUSTER_LOG_LEVEL: INFO
       CLUSTBUSTER_MAX_UPLOAD_MB: 2048
       CLUSTBUSTER_ENABLE_SEURAT_IMPORT: 1
+      CLUSTBUSTER_ENABLE_SCE_IMPORT: 1
     tmpfs:
       - /workspace:size=4G,mode=1777
       - /tmp:size=512M,mode=1777
