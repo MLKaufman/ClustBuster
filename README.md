@@ -38,6 +38,8 @@ exports before the session or container is removed.
 - Sparse-safe multi-gene feature plots and cluster-by-gene dot plots
 - Sparse-safe standardized module scores with reusable immune-cell presets,
   embedding visualization, and per-cluster summaries
+- Sparse-safe selected-cluster marker ranking with Welch statistics,
+  multiple-testing correction, ranked tables, and cluster heatmaps
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation

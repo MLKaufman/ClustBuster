@@ -62,6 +62,14 @@ def _matrix_and_names(
     return adata.layers[source.layer], pd.Index(adata.var_names.astype(str))
 
 
+def expression_matrix(
+    adata: AnnData, source: ExpressionSource
+) -> tuple[Any, pd.Index[str]]:
+    """Return the selected matrix and its feature names without copying it."""
+
+    return _matrix_and_names(adata, source)
+
+
 def _match_indices(
     names: pd.Index[str], requested: tuple[str, ...]
 ) -> tuple[list[int], GeneMatchReport]:

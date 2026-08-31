@@ -20,12 +20,14 @@ from clustbuster.core.expression import (
     extract_expression,
     parse_gene_list,
 )
+from clustbuster.core.markers import MarkerResult, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.models import ExpressionSource, Workspace
 from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.feature import feature_figure
+from clustbuster.plotting.heatmap import marker_heatmap_figure
 from clustbuster.plotting.module import module_score_figure
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
@@ -196,6 +198,40 @@ app_ui = ui.page_fillable(
                 ),
             ),
             ui.nav_panel(
+                "Markers & heatmap",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_select("marker_cluster", "Selected cluster", {}),
+                        ui.input_numeric(
+                            "marker_top_n", "Top genes", value=12, min=1, max=50
+                        ),
+                        ui.input_numeric(
+                            "marker_min_fraction",
+                            "Minimum expressing fraction",
+                            value=0.1,
+                            min=0,
+                            max=1,
+                            step=0.05,
+                        ),
+                        ui.input_action_button(
+                            "run_markers", "Rank markers", class_="btn-primary"
+                        ),
+                        col_widths=(3, 2, 4, 3),
+                    ),
+                    ui.help_text(
+                        "Ranks positive markers for the selected cluster versus all "
+                        "remaining cells using Welch's t-test with Benjamini-Hochberg correction."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("marker_feedback"),
+                ui.card(
+                    ui.card_header("Ranked markers"),
+                    ui.output_data_frame("marker_table"),
+                ),
+                output_widget("marker_heatmap", height="520px"),
+            ),
+            ui.nav_panel(
                 "Export",
                 ui.output_ui("export_status"),
                 ui.card(
@@ -245,6 +281,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     dotplot_error = reactive.Value[str | None](None)
     module_score_result = reactive.Value[ModuleScoreResult | None](None)
     module_error = reactive.Value[str | None](None)
+    marker_result = reactive.Value[MarkerResult | None](None)
+    marker_error = reactive.Value[str | None](None)
 
     session.on_ended(session_files.cleanup)
 
@@ -343,10 +381,12 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.update_select(
                 "annotation_cluster", choices=cluster_choices, session=session
             )
+            ui.update_select("marker_cluster", choices=cluster_choices, session=session)
             configured.set(True)
             feature_result.set(None)
             dotplot_result.set(None)
             module_score_result.set(None)
+            marker_result.set(None)
             revision.set(revision.get() + 1)
             ui.notification_show("Workspace configured", type="message", session=session)
         except Exception as exc:
@@ -604,6 +644,80 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "median_score": "Median score",
             }
         )
+
+    @reactive.effect
+    @reactive.event(input.run_markers)
+    def run_marker_ranking() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get() and current.cluster_column is not None)
+        assert current is not None and current.cluster_column is not None
+        marker_error.set(None)
+        try:
+            result = rank_markers(
+                current.adata,
+                current.expression_source,
+                current.cluster_column,
+                str(input.marker_cluster()),
+                top_n=int(input.marker_top_n()),
+                min_fraction=float(input.marker_min_fraction()),
+            )
+            marker_result.set(result)
+        except Exception as exc:
+            marker_result.set(None)
+            marker_error.set(str(exc))
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render.ui
+    def marker_feedback() -> ui.TagChild:
+        error = marker_error.get()
+        result = marker_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, select a cluster, and rank its markers.")
+        return ui.div(
+            f"Ranked {len(result.values)} positive marker gene(s) for cluster "
+            f"{result.selected_cluster}.",
+            class_="alert alert-success",
+        )
+
+    @output
+    @render.data_frame
+    def marker_table() -> pd.DataFrame:
+        result = marker_result.get()
+        req(result is not None)
+        assert result is not None
+        table = result.values[
+            [
+                "rank",
+                "gene",
+                "score",
+                "p_adjusted",
+                "mean_difference",
+                "fraction_selected",
+                "fraction_rest",
+            ]
+        ].copy()
+        return table.rename(
+            columns={
+                "rank": "Rank",
+                "gene": "Gene",
+                "score": "Welch score",
+                "p_adjusted": "Adjusted p-value",
+                "mean_difference": "Mean difference",
+                "fraction_selected": "Fraction selected",
+                "fraction_rest": "Fraction rest",
+            }
+        )
+
+    @output
+    @render_plotly
+    def marker_heatmap() -> Any:
+        result = marker_result.get()
+        req(result is not None)
+        assert result is not None
+        return marker_heatmap_figure(result)
 
     @output
     @render.ui
