@@ -67,9 +67,11 @@ def _styles() -> ui.Tag:
         """
         :root { --cb-navy: #19324a; --cb-teal: #2d8c88; --cb-bg: #f4f7f8; }
         body { background: var(--cb-bg); color: var(--cb-navy); }
-        .cb-workspace-brand { display:flex; align-items:center; gap:.8rem; padding:.15rem 0 1rem;
-                              margin-bottom:1rem; border-bottom:1px solid #dbe4e8; }
-        .cb-logo { width:72px; height:72px; border-radius:16px; flex:0 0 auto; }
+        .cb-workspace-brand { display:block; padding:.15rem 0 1rem; margin-bottom:1rem;
+                              border-bottom:1px solid #dbe4e8; text-align:center; }
+        .cb-workspace-brand > div { padding-top:.7rem; }
+        .cb-logo { display:block; width:100%; height:auto; aspect-ratio:1; object-fit:cover;
+                   border-radius:18px; }
         .cb-title { margin:0; font-size:1.55rem; font-weight:700; }
         .cb-subtitle { margin:0; color:#607180; font-size:.88rem; }
         .cb-version { display:block; margin-top:.2rem; color:#607180; font-size:.78rem;
@@ -89,6 +91,15 @@ def _styles() -> ui.Tag:
         .cb-annotation-table input { font-size:.84rem; padding:.3rem .45rem; min-width:0; }
         .cb-annotation-actions { display:flex; gap:.5rem; flex:0 0 auto; }
         .cb-annotation-actions .btn { flex:1 1 0; }
+        #dataset_progress.shiny-file-input-progress { height:1rem; min-height:1rem;
+                                                       margin-top:.65rem; margin-bottom:1rem;
+                                                       border-radius:.5rem; overflow:hidden; }
+        #dataset_progress .progress-bar { min-height:1rem; }
+        .cb-overview-stack { display:flex; flex-direction:column; gap:0; }
+        .cb-overview-plot { width:100%; height:1160px; min-height:1160px; margin:0; }
+        #embedding_plot { width:100% !important; height:1160px !important;
+                          min-height:1160px !important; margin:0 !important; }
+        .cb-import-report { margin-top:0 !important; }
         .btn-primary { background-color:var(--cb-teal); border-color:var(--cb-teal); }
         """
     )
@@ -133,12 +144,20 @@ app_ui = ui.page_fillable(
             ui.nav_panel(
                 "Overview",
                 ui.output_ui("overview_header"),
-                output_widget("embedding_plot", height="580px"),
-            ),
-            ui.nav_panel(
-                "Import report",
-                ui.output_ui("report_summary"),
-                ui.output_data_frame("report_table"),
+                ui.div(
+                    ui.div(
+                        output_widget("embedding_plot", width="100%", height="1160px"),
+                        class_="cb-overview-plot",
+                    ),
+                    ui.card(
+                        ui.card_header("Import report"),
+                        ui.output_ui("report_summary"),
+                        ui.output_data_frame("report_table"),
+                        class_="cb-import-report",
+                        fill=False,
+                    ),
+                    class_="cb-overview-stack",
+                ),
             ),
             ui.nav_panel(
                 "Feature plot",
@@ -740,14 +759,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             if report_messages
             else ui.p("No import warnings.", class_="text-success")
         )
-        return ui.card(
-            ui.card_header(report.source_filename),
+        return ui.div(
+            ui.h5(report.source_filename),
             ui.p(
                 f"{report.cell_count:,} cells x {report.feature_count:,} features · "
                 f"{'sparse' if report.sparse else 'dense'} expression matrix"
             ),
             warning_text,
-            fill=False,
         )
 
     @output

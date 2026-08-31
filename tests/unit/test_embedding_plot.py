@@ -46,6 +46,13 @@ def test_embedding_uses_webgl_and_stable_cell_customdata() -> None:
     assert len(figure.data) == 2
     assert all(trace.type == "scattergl" for trace in figure.data)
     assert figure.data[0].customdata[0][0] == "c1"
+    assert figure.layout.height == 1160
+    assert figure.layout.yaxis.scaleanchor == "x"
+    assert figure.layout.yaxis.scaleratio == 1
+    assert [(item.text, item.x, item.y) for item in figure.layout.annotations] == [
+        ("a", 0.5, 0.0),
+        ("b", 2.0, 3.0),
+    ]
 
 
 def test_embedding_can_color_by_current_annotations() -> None:
@@ -53,3 +60,4 @@ def test_embedding_can_color_by_current_annotations() -> None:
     workspace.annotations.assign("a", "T cell")
     figure = embedding_figure(workspace, color_by="annotation")
     assert {trace.name for trace in figure.data} == {"T cell", "b"}
+    assert [item.text for item in figure.layout.annotations] == ["T cell", "b"]

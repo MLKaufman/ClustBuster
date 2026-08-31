@@ -28,6 +28,14 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
     for index, label in enumerate(labels):
         grouped_indices[label].append(index)
 
+    cluster_indices: dict[str, list[int]] = defaultdict(list)
+    cluster_annotations: dict[str, str] = {}
+    current_annotations = workspace.annotations.materialize(clusters)
+    for index, cluster in enumerate(clusters):
+        cluster_label = "<missing>" if cluster is None else str(cluster)
+        cluster_indices[cluster_label].append(index)
+        cluster_annotations[cluster_label] = current_annotations[index]
+
     figure = go.Figure()
     cell_ids = workspace.adata.obs_names.astype(str).tolist()
     for label, indices in grouped_indices.items():
@@ -42,14 +50,27 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
                 marker={"size": 6, "opacity": 0.78},
             )
         )
+    for cluster, indices in cluster_indices.items():
+        figure.add_annotation(
+            x=float(np.median(coordinates[indices, 0])),
+            y=float(np.median(coordinates[indices, 1])),
+            text=cluster_annotations[cluster],
+            showarrow=False,
+            font={"size": 13, "color": "#19324a"},
+            bgcolor="rgba(255, 255, 255, 0.82)",
+            bordercolor="rgba(25, 50, 74, 0.35)",
+            borderpad=3,
+        )
     embedding_name = workspace.embedding_key.removeprefix("X_").upper()
     figure.update_layout(
         template="plotly_white",
-        margin={"l": 48, "r": 20, "t": 35, "b": 48},
+        height=1160,
+        autosize=True,
+        margin={"l": 48, "r": 20, "t": 35, "b": 35},
         legend={"title": {"text": legend_title}, "itemsizing": "constant"},
         xaxis_title=f"{embedding_name} 1",
         yaxis_title=f"{embedding_name} 2",
+        yaxis={"scaleanchor": "x", "scaleratio": 1},
         dragmode="lasso",
     )
     return figure
-
