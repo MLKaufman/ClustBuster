@@ -15,6 +15,7 @@ dependencies = [
   "numpy>=2.0,<3",
   "pandas>=2.2,<4",
   "plotly>=6.0,<7",
+  "pyclustifyr",
   "scipy>=1.14,<2",
   "shiny>=1.4,<2",
   "shinywidgets>=0.5,<1",
@@ -64,3 +65,6 @@ module = [
   "scipy.*",
 ]
 ignore_missing_imports = true
+
+[tool.uv.sources]
+pyclustifyr = { git = "https://github.com/MLKaufman/pyclustifyr.git", rev = "db8761a87072b814f95ce7e0767540b4d10689bd" }

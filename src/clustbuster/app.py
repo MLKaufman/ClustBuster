@@ -25,6 +25,12 @@ from clustbuster.core.markers import MarkerResult, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
+from clustbuster.integrations.pyclustifyr import (
+    SUPPORTED_METHODS,
+    PyClustifyrAdapter,
+    ReferenceAnnotationParameters,
+    ReferenceAnnotationResult,
+)
 from clustbuster.models import (
     CellTypeSummary,
     ExpressionSource,
@@ -39,6 +45,7 @@ from clustbuster.plotting.enrichment import enrichment_figure
 from clustbuster.plotting.feature import feature_figure
 from clustbuster.plotting.heatmap import marker_heatmap_figure
 from clustbuster.plotting.module import module_score_figure
+from clustbuster.plotting.reference import reference_correlation_figure
 from clustbuster.resources.markers.csv import CsvMarkerProvider
 from clustbuster.resources.references.local import LocalReferenceProvider
 from clustbuster.services.exports import WorkspaceExportService
@@ -209,6 +216,35 @@ app_ui = ui.page_fillable(
                 ),
             ),
             ui.nav_panel(
+                "Reference annotation",
+                ui.card(
+                    ui.card_header("Reference-based cluster annotation"),
+                    ui.output_ui("reference_annotation_controls"),
+                    ui.help_text(
+                        "Scoring runs locally with pyclustifyr. Results remain a preview until "
+                        "you explicitly apply them to the current annotation state."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("reference_annotation_feedback"),
+                ui.layout_columns(
+                    ui.input_action_button(
+                        "apply_reference_predictions",
+                        "Apply predictions",
+                        class_="btn-primary",
+                    ),
+                    ui.input_action_button(
+                        "discard_reference_predictions", "Discard preview"
+                    ),
+                    col_widths=(3, 3),
+                ),
+                ui.card(
+                    ui.card_header("Prediction preview"),
+                    ui.output_data_frame("reference_prediction_table"),
+                ),
+                output_widget("reference_correlation_plot", height="560px"),
+            ),
+            ui.nav_panel(
                 "Module scores",
                 ui.card(
                     ui.layout_columns(
@@ -373,11 +409,15 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     )
     marker_provider = CsvMarkerProvider(config.marker_catalog_path)
     reference_provider = LocalReferenceProvider(config.reference_root)
+    reference_adapter = PyClustifyrAdapter()
     marker_search_results = reactive.Value[list[CellTypeSummary]]([])
     loaded_marker_set = reactive.Value[MarkerSet | None](None)
     loaded_reference = reactive.Value[LoadedReference | None](None)
     marker_resource_error = reactive.Value[str | None](None)
     reference_resource_error = reactive.Value[str | None](None)
+    reference_annotation_result = reactive.Value[ReferenceAnnotationResult | None](None)
+    reference_annotation_error = reactive.Value[str | None](None)
+    reference_annotation_applied = reactive.Value(False)
 
     session.on_ended(session_files.cleanup)
 
@@ -483,6 +523,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             module_score_result.set(None)
             marker_result.set(None)
             enrichment_result.set(None)
+            reference_annotation_result.set(None)
+            reference_annotation_error.set(None)
+            reference_annotation_applied.set(False)
             revision.set(revision.get() + 1)
             ui.notification_show("Workspace configured", type="message", session=session)
         except Exception as exc:
@@ -851,6 +894,179 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 for item in references
             ]
         )
+
+    @output
+    @render.ui
+    def reference_annotation_controls() -> ui.TagChild:
+        try:
+            references = reference_provider.list_references(ReferenceFilters())
+        except Exception as exc:
+            return ui.div(str(exc), class_="alert alert-warning")
+        return ui.layout_columns(
+            ui.input_select(
+                "annotation_reference_id",
+                "Reference",
+                {item.reference_id: item.name for item in references},
+            ),
+            ui.input_select(
+                "reference_method",
+                "Similarity",
+                {method: method.title() for method in SUPPORTED_METHODS},
+                selected="spearman",
+            ),
+            ui.input_numeric(
+                "reference_min_overlap", "Minimum shared genes", value=5, min=2, step=1
+            ),
+            ui.input_numeric(
+                "reference_threshold",
+                "Minimum score",
+                value=0,
+                min=-1,
+                max=1,
+                step=0.05,
+            ),
+            ui.input_checkbox(
+                "reference_query_is_log",
+                "Query is log-normalized",
+                value=True,
+            ),
+            ui.input_action_button(
+                "run_reference_annotation", "Run annotation", class_="btn-primary"
+            ),
+            col_widths=(3, 2, 2, 2, 3, 3),
+        )
+
+    @reactive.effect
+    @reactive.event(input.run_reference_annotation)
+    def run_reference_annotation() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        reference_annotation_error.set(None)
+        reference_annotation_applied.set(False)
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.15, message="Validating reference and gene overlap")
+            try:
+                reference = reference_provider.load_reference(
+                    str(input.annotation_reference_id())
+                )
+                parameters = ReferenceAnnotationParameters(
+                    compute_method=str(input.reference_method()),
+                    minimum_gene_overlap=int(input.reference_min_overlap()),
+                    threshold=float(input.reference_threshold()),
+                    query_is_log_normalized=bool(input.reference_query_is_log()),
+                )
+                progress.set(0.45, message="Scoring source clusters")
+                result = reference_adapter.annotate(current, reference, parameters)
+                reference_annotation_result.set(result)
+                progress.set(1, message="Prediction preview ready")
+                ui.notification_show(
+                    f"Previewed predictions for {len(result.predictions)} clusters",
+                    type="message",
+                    session=session,
+                )
+            except Exception as exc:
+                reference_annotation_result.set(None)
+                reference_annotation_error.set(str(exc))
+                logger.exception(
+                    "Reference annotation failed", extra={"error_type": type(exc).__name__}
+                )
+                ui.notification_show(str(exc), type="error", duration=10, session=session)
+
+    @output
+    @render.ui
+    def reference_annotation_feedback() -> ui.TagChild:
+        error = reference_annotation_error.get()
+        result = reference_annotation_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p(
+                "Configure a workspace, select a reference, and run annotation."
+            )
+        status = (
+            "Predictions applied to current annotations."
+            if reference_annotation_applied.get()
+            else "Preview only — review the table and correlations before applying."
+        )
+        warnings = (
+            ui.tags.ul(*(ui.tags.li(item) for item in result.warnings))
+            if result.warnings
+            else ui.p("No scoring warnings.")
+        )
+        return ui.div(
+            ui.strong(
+                f"{len(result.matched_genes)} shared genes · pyclustifyr "
+                f"{result.package_version} · {result.parameters.compute_method}"
+            ),
+            ui.p(status),
+            warnings,
+            class_=(
+                "alert alert-success"
+                if reference_annotation_applied.get()
+                else "alert alert-info"
+            ),
+        )
+
+    @output
+    @render.data_frame
+    def reference_prediction_table() -> pd.DataFrame:
+        result = reference_annotation_result.get()
+        if result is None:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [
+                {
+                    "Cluster": prediction.cluster_display,
+                    "Predicted annotation": prediction.annotation,
+                    "Best score": round(prediction.confidence, 4),
+                    "Margin": round(prediction.margin, 4),
+                }
+                for prediction in result.predictions
+            ]
+        )
+
+    @output
+    @render_plotly
+    def reference_correlation_plot() -> Any:
+        result = reference_annotation_result.get()
+        req(result is not None)
+        assert result is not None
+        return reference_correlation_figure(result)
+
+    @reactive.effect
+    @reactive.event(input.apply_reference_predictions)
+    def apply_reference_predictions() -> None:
+        current = workspace.get()
+        result = reference_annotation_result.get()
+        req(current is not None and configured.get() and result is not None)
+        assert current is not None and result is not None
+        version_label = result.reference.summary.resource_version or "unknown"
+        reference_label = f"{result.reference.summary.reference_id}@{version_label}"
+        try:
+            current.annotations.apply_previewed(
+                result.predictions,
+                source="pyclustifyr",
+                reference_id=reference_label,
+            )
+            reference_annotation_applied.set(True)
+            revision.set(revision.get() + 1)
+            ui.notification_show(
+                f"Applied {len(result.predictions)} reference predictions",
+                type="message",
+                session=session,
+            )
+        except Exception as exc:
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @reactive.effect
+    @reactive.event(input.discard_reference_predictions)
+    def discard_reference_predictions() -> None:
+        req(reference_annotation_result.get() is not None)
+        reference_annotation_result.set(None)
+        reference_annotation_error.set(None)
+        reference_annotation_applied.set(False)
+        ui.notification_show("Reference preview discarded", type="message", session=session)
 
     @reactive.effect
     @reactive.event(input.module_preset, ignore_init=True)

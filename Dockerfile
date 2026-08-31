@@ -1,6 +1,9 @@
 FROM python:3.13-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.7 /uv /usr/local/bin/uv
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_NO_CACHE=1
 WORKDIR /build
@@ -14,7 +17,8 @@ ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     CLUSTBUSTER_HOST=0.0.0.0 \
     CLUSTBUSTER_PORT=8000 \
-    CLUSTBUSTER_WORKSPACE_ROOT=/workspace
+    CLUSTBUSTER_WORKSPACE_ROOT=/workspace \
+    MPLCONFIGDIR=/tmp/matplotlib
 RUN groupadd --system clustbuster \
     && useradd --system --gid clustbuster --home-dir /app clustbuster \
     && mkdir -p /app /workspace \

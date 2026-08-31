@@ -44,6 +44,8 @@ exports before the session or container is removed.
   with ranked terms and an interactive significance summary
 - Validated local CSV marker catalogs and CSV/TSV/Parquet reference matrices,
   including provider health, filtering, checksums, and bundled demonstration data
+- Reference-based cluster annotation through a pinned `pyclustifyr` adapter, with
+  shared-gene validation, correlation previews, thresholds, and explicit apply/discard
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
@@ -71,3 +73,17 @@ and unavailable resources degrade only the Resources panel.
 
 The bundled records are synthetic workflow fixtures, not an authoritative marker
 database or a substitute for biological review.
+
+## Reference annotation
+
+After configuring a workspace, open **Reference annotation**, choose a validated
+local reference, and run scoring. ClustBuster shows the full cluster-by-cell-type
+similarity matrix and best-call preview. Nothing changes in annotation state until
+**Apply predictions** is selected; applied records retain the score,
+`source=pyclustifyr`, and the reference identifier/version. The bundled PBMC
+reference is synthetic and intended only to test the workflow with
+`testdata/clustbuster-demo.h5ad`.
+
+The adapter is pinned to pyclustifyr revision
+`db8761a87072b814f95ce7e0767540b4d10689bd`; API findings and current limitations
+are recorded in `docs/research/pyclustifyr.md`.

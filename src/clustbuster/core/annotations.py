@@ -61,6 +61,17 @@ class AnnotationRecord:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewedAnnotation:
+    """A non-mutating cluster-label prediction ready for explicit application."""
+
+    cluster_id: str
+    cluster_display: str
+    annotation: str
+    confidence: float
+    margin: float
+
+
 class AnnotationStore:
     """Mutable annotation state that never mutates source observations."""
 
@@ -157,6 +168,40 @@ class AnnotationStore:
             raise KeyError("One or more cluster identifiers are unknown")
         for cluster in cluster_values:
             self.assign(cluster, annotation, **metadata)
+
+    def apply_previewed(
+        self,
+        predictions: Iterable[PreviewedAnnotation],
+        *,
+        source: str,
+        reference_id: str,
+    ) -> tuple[AnnotationRecord, ...]:
+        """Atomically apply a validated prediction set to annotation state."""
+
+        items = tuple(predictions)
+        keys = [item.cluster_id for item in items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("A prediction set must contain each cluster at most once")
+        if any(not item.annotation.strip() for item in items):
+            raise ValueError("Predicted annotations must not be empty")
+        if any(key not in self._records for key in keys):
+            raise KeyError("One or more predicted cluster identifiers are unknown")
+
+        timestamp = _utc_now()
+        updated = tuple(
+            replace(
+                self._records[item.cluster_id],
+                annotation=item.annotation.strip(),
+                source=source,
+                confidence=item.confidence,
+                reference_id=reference_id,
+                updated_at=timestamp,
+            )
+            for item in items
+        )
+        for record in updated:
+            self._records[record.cluster_id.serialized] = record
+        return updated
 
     def reset(self, clusters: Iterable[Any] | None = None) -> None:
         targets = (

@@ -1,6 +1,10 @@
 import pytest
 
-from clustbuster.core.annotations import AnnotationStore, ClusterIdentifier
+from clustbuster.core.annotations import (
+    AnnotationStore,
+    ClusterIdentifier,
+    PreviewedAnnotation,
+)
 
 
 def test_cluster_identifiers_preserve_python_scalar_type() -> None:
@@ -48,3 +52,34 @@ def test_missing_cluster_is_supported() -> None:
     store = AnnotationStore.from_clusters([None, float("nan")])
     assert len(store) == 1
     assert store.annotation_for(None) == "<missing>"
+
+
+def test_previewed_predictions_apply_atomically_with_provenance() -> None:
+    store = AnnotationStore.from_clusters(["a", "b"])
+    predictions = (
+        PreviewedAnnotation(
+            cluster_id=ClusterIdentifier.from_value("a").serialized,
+            cluster_display="a",
+            annotation="T cell",
+            confidence=0.91,
+            margin=0.4,
+        ),
+        PreviewedAnnotation(
+            cluster_id=ClusterIdentifier.from_value("missing").serialized,
+            cluster_display="missing",
+            annotation="B cell",
+            confidence=0.8,
+            margin=0.3,
+        ),
+    )
+    with pytest.raises(KeyError, match="predicted cluster"):
+        store.apply_previewed(predictions, source="pyclustifyr", reference_id="ref-v1")
+    assert store.annotation_for("a") == "a"
+
+    applied = store.apply_previewed(
+        predictions[:1], source="pyclustifyr", reference_id="ref-v1"
+    )
+    assert applied[0].annotation == "T cell"
+    assert applied[0].source == "pyclustifyr"
+    assert applied[0].reference_id == "ref-v1"
+    assert applied[0].confidence == pytest.approx(0.91)
