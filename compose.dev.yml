@@ -1,0 +1,16 @@
+services:
+  clustbuster:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CLUSTBUSTER_LOG_LEVEL: INFO
+      CLUSTBUSTER_MAX_UPLOAD_MB: 2048
+    tmpfs:
+      - /workspace:size=4G,mode=1777
+      - /tmp:size=512M,mode=1777
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
