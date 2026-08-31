@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import warnings as python_warnings
 from pathlib import Path
 from typing import Any
@@ -76,7 +77,30 @@ def _inspect_h5seurat(path: Path) -> tuple[str, list[str]]:
     return active_assay, [name for name in assay_names if name != active_assay]
 
 
-def _read_rds_source(path: Path) -> tuple[str, Any]:
+def _has_canonical_seurat_slots(source_data: dict[str, Any]) -> bool:
+    """Recognize a Seurat S4 payload when rdata omits its top-level class attribute."""
+
+    required_slots = {
+        "active.assay",
+        "active.ident",
+        "assays",
+        "meta.data",
+        "project.name",
+        "reductions",
+        "version",
+    }
+    if not required_slots.issubset(source_data):
+        return False
+    active_assay = _first_string(source_data.get("active.assay"))
+    assays = source_data.get("assays")
+    if not active_assay or not isinstance(assays, dict) or active_assay not in assays:
+        return False
+    assay_data = getattr(assays[active_assay], "__dict__", {})
+    assay_class = _first_string(assay_data.get("class"))
+    return assay_class in {"Assay", "Assay5"}
+
+
+def _read_rds_source(path: Path) -> tuple[str, Any, bool]:
     """Decode the source once for strict class and assay inspection."""
 
     try:
@@ -84,10 +108,11 @@ def _read_rds_source(path: Path) -> tuple[str, Any]:
 
         with python_warnings.catch_warnings():
             python_warnings.simplefilter("ignore")
-            source = read_rds(str(path))
+        source = read_rds(str(path))
         source_data = source.__dict__
         source_class = _first_string(source_data.get("class"))
-        if source_class != "Seurat":
+        inferred_class = source_class is None and _has_canonical_seurat_slots(source_data)
+        if source_class != "Seurat" and not inferred_class:
             raise SeuratImportError(
                 f"The RDS contains {source_class or 'an unknown R object'}, not a Seurat object. "
                 "Use the SingleCellExperiment importer for SCE files or convert the object to "
@@ -97,7 +122,7 @@ def _read_rds_source(path: Path) -> tuple[str, Any]:
         assays = source_data.get("assays")
         if not active_assay or not isinstance(assays, dict) or active_assay not in assays:
             raise SeuratImportError("The Seurat object has no readable active assay")
-        return active_assay, source
+        return active_assay, source, inferred_class
     except SeuratImportError:
         raise
     except Exception as exc:
@@ -284,7 +309,11 @@ class SeuratImporter:
                     for name in non_active_assays
                 )
             else:
-                active_assay, source_object = _read_rds_source(path)
+                active_assay, source_object, inferred_class = _read_rds_source(path)
+                if inferred_class:
+                    report_warnings.append(
+                        "Recovered the Seurat class from its canonical S4 slot structure"
+                    )
                 source_assay = source_object.__dict__["assays"][active_assay]
                 assay_class = _first_string(source_assay.__dict__.get("class"))
                 if assay_class == "Assay":
@@ -301,6 +330,13 @@ class SeuratImporter:
                         raise SeuratImportError(
                             "The active assay has no feature-name coordinate"
                         )
+                    has_secondary_assays = len(source_object.__dict__["assays"]) > 1
+                    if not has_secondary_assays:
+                        # Avoid retaining one complete decoded R object while readseurat
+                        # decodes it again. This is material for real-world multi-GB RDS files.
+                        source_assay = None
+                        source_object = None
+                        gc.collect()
                     with python_warnings.catch_warnings():
                         python_warnings.simplefilter("ignore")
                         adata = readseurat.read_seurat(str(path))
@@ -314,14 +350,15 @@ class SeuratImporter:
                             "Recovered Seurat v5 feature identifiers from the Assay5 coordinate map"
                         )
 
-                    mapped_layers, unsupported_assays = _map_secondary_assays(
-                        source_object, active_assay, adata
-                    )
-                    unsupported.extend(unsupported_assays)
-                    if mapped_layers:
-                        report_warnings.append(
-                            f"Mapped {len(mapped_layers)} compatible secondary-assay layer(s)"
+                    if source_object is not None:
+                        mapped_layers, unsupported_assays = _map_secondary_assays(
+                            source_object, active_assay, adata
                         )
+                        unsupported.extend(unsupported_assays)
+                        if mapped_layers:
+                            report_warnings.append(
+                                f"Mapped {len(mapped_layers)} compatible secondary-assay layer(s)"
+                            )
                 else:
                     raise SeuratImportError(
                         f"The active assay class {assay_class or 'unknown'!r} is not supported"

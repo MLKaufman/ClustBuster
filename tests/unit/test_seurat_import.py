@@ -1,11 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import anndata as ad
 import pytest
 from scipy import sparse
 
 from clustbuster.core.workspace import workspace_from_import
-from clustbuster.io.seurat import SeuratImporter, SeuratImportError
+from clustbuster.io.seurat import SeuratImporter, SeuratImportError, _read_rds_source
 from clustbuster.models import ObjectFormat
 from clustbuster.services.exports import ANNOTATION_COLUMN, PROVENANCE_KEY, WorkspaceExportService
 from clustbuster.services.workspaces import configure_workspace
@@ -50,6 +51,49 @@ def test_probe_recognizes_compressed_rds_fixture() -> None:
     result = SeuratImporter().probe(FIXTURE)
     assert result.format is ObjectFormat.SEURAT
     assert result.confidence == 0.8
+
+
+def test_classless_canonical_seurat_payload_is_recognized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assay = SimpleNamespace(**{"class": ["Assay5"]})
+    source = SimpleNamespace(
+        **{
+            "active.assay": ["RNA"],
+            "active.ident": [],
+            "assays": {"RNA": assay},
+            "meta.data": object(),
+            "project.name": ["real-world"],
+            "reductions": {},
+            "version": [[5, 1, 0]],
+        }
+    )
+    path = tmp_path / "classless.rds"
+    path.write_bytes(b"fixture")
+    monkeypatch.setattr("readseurat.rdata.read_rds", lambda _: source)
+
+    active_assay, decoded, inferred_class = _read_rds_source(path)
+
+    assert active_assay == "RNA"
+    assert decoded is source
+    assert inferred_class is True
+
+
+def test_classless_noncanonical_payload_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = SimpleNamespace(
+        **{
+            "active.assay": ["RNA"],
+            "assays": {"RNA": SimpleNamespace(**{"class": ["Assay5"]})},
+        }
+    )
+    path = tmp_path / "not-seurat.rds"
+    path.write_bytes(b"fixture")
+    monkeypatch.setattr("readseurat.rdata.read_rds", lambda _: source)
+
+    with pytest.raises(SeuratImportError, match="unknown R object"):
+        _read_rds_source(path)
 
 
 def test_load_genuine_seurat_v4_fixture() -> None:

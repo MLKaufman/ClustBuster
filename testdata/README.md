@@ -17,6 +17,10 @@ using biological or identifying data.
 - `so.h5seurat` — deterministic H5Seurat compatibility fixture produced by the
   pinned `readseurat` writer: 12 cells, five genes, sparse expression and counts,
   three `seurat_clusters`, and a UMAP reduction.
+- `so-large.rds` — optional real-world SeuratObject 5.1.0 stress fixture with
+  61,844 cells and 32,285 genes. Its decoder representation omits the top-level
+  class attribute while retaining the canonical Seurat S4 slots; it is excluded
+  from the routine test suite because it is approximately 1.9 GB.
 - `sce.rds` — genuine SingleCellExperiment 1.34.0 object produced with
   Bioconductor 3.23: 40 cells, eight genes, sparse counts, dense log-counts,
   four `sce_clusters` groups, a UMAP reduced dimension, and an explicitly reported
@@ -40,3 +44,8 @@ R_LIBS=/path/to/seurat-v4-library Rscript scripts/create_test_fixtures/generate_
 
 The R generator accepts `seurat`, `sce`, or `all` and refuses to create substitute
 files when the corresponding real R package is absent.
+
+The optional large fixture requires at least 2 GB of upload staging space, 4 GB of
+free session-workspace space, and substantially more working memory while its sparse
+R matrices are decoded. `compose.dev.yml` provides 3 GB for `/tmp` and 8 GB for
+`/workspace`; ensure Docker Desktop itself has enough memory and disk allocated.

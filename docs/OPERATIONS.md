@@ -11,9 +11,13 @@ ephemeral ClustBuster container per active user session.
 - a trusted TLS certificate and private key
 - enough host capacity for the configured session count and resource limits
 
-The default capacity is four sessions at four CPUs and 16 GB RAM each. These are
+The default capacity is four sessions at four CPUs and 24 GB RAM each. These are
 starting limits, not measured guarantees for every dataset. Reduce them for a
 smaller host and complete staged load testing before opening access.
+
+The 61,844-cell `so-large.rds` stress fixture used approximately 18.3 GiB at peak
+during import on Docker Desktop. Keep meaningful headroom above that measurement;
+different objects with denser matrices or more assays can require substantially more.
 
 On Docker Desktop for macOS, the mounted socket is normally owned by group `0`
 inside Linux containers, so use `DOCKER_GID=0`. On Linux, use the socket group ID

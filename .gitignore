@@ -14,3 +14,4 @@ build/
 deployment/.env.production
 deployment/certs/*.pem
 workspace/
+testdata/so-large.rds

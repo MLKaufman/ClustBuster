@@ -9,8 +9,10 @@ services:
       CLUSTBUSTER_ENABLE_SEURAT_IMPORT: 1
       CLUSTBUSTER_ENABLE_SCE_IMPORT: 1
     tmpfs:
-      - /workspace:size=4G,mode=1777
-      - /tmp:size=512M,mode=1777
+      # Shiny stages uploads in /tmp before ClustBuster copies them into the
+      # session workspace. These limits accommodate the 1.9 GB stress fixture.
+      - /workspace:size=8G,mode=1777
+      - /tmp:size=3G,mode=1777
     read_only: true
     security_opt:
       - no-new-privileges:true

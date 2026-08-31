@@ -52,7 +52,7 @@ def test_shinyproxy_enforces_authentication_lifecycle_and_resource_limits() -> N
     assert spec["max-instances"] == 1
     assert spec["stop-on-logout"] is True
     assert "CLUSTBUSTER_SESSION_CPUS" in spec["container-cpu-limit"]
-    assert "CLUSTBUSTER_SESSION_MEMORY" in spec["container-memory-limit"]
+    assert spec["container-memory-limit"] == "${CLUSTBUSTER_SESSION_MEMORY:24G}"
     assert spec["container-env"]["CLUSTBUSTER_ENABLE_SEURAT_IMPORT"] == "1"
     assert spec["container-env"]["CLUSTBUSTER_ENABLE_SCE_IMPORT"] == "1"
 
@@ -78,3 +78,11 @@ def test_example_environment_contains_no_password() -> None:
         "CLUSTBUSTER_ADMIN_PASSWORD=",
         "CLUSTBUSTER_USER_PASSWORD=",
     ]
+
+
+def test_development_tmpfs_accepts_large_upload_staging_and_session_copy() -> None:
+    compose = _yaml(ROOT / "compose.dev.yml")
+    tmpfs = compose["services"]["clustbuster"]["tmpfs"]
+
+    assert "/tmp:size=3G,mode=1777" in tmpfs
+    assert "/workspace:size=8G,mode=1777" in tmpfs

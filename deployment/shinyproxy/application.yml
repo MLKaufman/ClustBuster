@@ -57,7 +57,7 @@ proxy:
       container-network: clustbuster-apps
       container-network-connections: [clustbuster-egress]
       container-cpu-limit: ${CLUSTBUSTER_SESSION_CPUS:4}
-      container-memory-limit: ${CLUSTBUSTER_SESSION_MEMORY:16G}
+      container-memory-limit: ${CLUSTBUSTER_SESSION_MEMORY:24G}
       max-instances: 1
       max-total-instances: ${CLUSTBUSTER_MAX_SESSIONS:4}
       heartbeat-timeout: ${CLUSTBUSTER_IDLE_TIMEOUT_MS:900000}

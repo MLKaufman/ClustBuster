@@ -88,6 +88,13 @@ unsupported.
 The repository includes genuine Seurat v4 and v5 RDS fixtures plus a deterministic
 H5Seurat compatibility fixture under `testdata/`.
 
+`testdata/so-large.rds` is an optional 1.9 GB real-world stress fixture. The
+development Compose configuration sizes Shiny's temporary upload area and the
+session workspace for this file, but Docker Desktop must also have sufficient memory
+and disk available. Its measured import peak was approximately 18.3 GiB, so 24 GiB
+per session is the production default. It is intentionally excluded from the routine
+automated suite.
+
 GO enrichment is the only current workflow that sends data outside the local
 container. An explicit Run action submits only the displayed marker gene symbols
 and a non-identifying cluster description to the
