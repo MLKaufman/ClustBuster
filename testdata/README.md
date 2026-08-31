@@ -11,11 +11,15 @@ using biological or identifying data.
   eight genes, sparse counts, four `seurat_clusters`, cell metadata, a UMAP
   reduction, a compatible secondary assay, and an intentionally incompatible ADT
   assay for mapping/reporting tests.
+- `so.h5seurat` — deterministic H5Seurat compatibility fixture produced by the
+  pinned `readseurat` writer: 12 cells, five genes, sparse expression and counts,
+  three `seurat_clusters`, and a UMAP reduction.
 
 Regenerate the fixtures with:
 
 ```bash
 uv run python scripts/create_test_fixtures/generate_h5ad.py
+uv run python scripts/create_test_fixtures/generate_h5seurat.py
 Rscript scripts/create_test_fixtures/generate_rds.R seurat
 ```
 

@@ -6,6 +6,7 @@ import warnings as python_warnings
 from pathlib import Path
 from typing import Any
 
+import h5py  # type: ignore[import-untyped]
 import numpy as np
 import readseurat
 from scipy import sparse
@@ -48,6 +49,30 @@ def _coordinate_names(value: Any, coordinate: str = "dim_0") -> tuple[str, ...]:
     if values is None:
         return ()
     return tuple(str(item) for item in values)
+
+
+def _inspect_h5seurat(path: Path) -> tuple[str, list[str]]:
+    """Read lightweight assay metadata without materializing expression matrices."""
+
+    try:
+        with h5py.File(path, "r") as source:
+            active_value = source.attrs.get("active.assay")
+            if isinstance(active_value, bytes):
+                active_assay = active_value.decode("utf-8")
+            else:
+                active_assay = str(active_value) if active_value is not None else ""
+            assays = source.get("assays")
+            assay_names = [str(name) for name in assays] if assays is not None else []
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SeuratImportError("The H5Seurat header could not be read") from exc
+
+    if not active_assay:
+        raise SeuratImportError("The H5Seurat file does not declare an active assay")
+    if active_assay not in assay_names:
+        raise SeuratImportError(
+            f"The H5Seurat active assay {active_assay!r} is not present in the assay table"
+        )
+    return active_assay, [name for name in assay_names if name != active_assay]
 
 
 def _recover_rds_metadata(path: Path) -> tuple[tuple[str, ...], str, Any]:
@@ -176,7 +201,12 @@ class SeuratImporter:
         source_object: Any | None = None
         try:
             if path.suffix.lower() == self._H5SEURAT_SUFFIX:
+                active_assay, non_active_assays = _inspect_h5seurat(path)
                 adata = readseurat.read_h5seurat(str(path))
+                unsupported.extend(
+                    f"Non-active H5Seurat assay {name!r} is not imported by the pinned reader"
+                    for name in non_active_assays
+                )
             else:
                 features, active_assay, source_object = _recover_rds_metadata(path)
                 with python_warnings.catch_warnings():

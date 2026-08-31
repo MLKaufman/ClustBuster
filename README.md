@@ -69,6 +69,9 @@ The adapter pins `readseurat==0.1.0` and repairs its known Assay5 feature-coordi
 conversion defect. On-disk layers, custom S4 extensions, and native RDS export remain
 unsupported.
 
+The repository includes both a genuine Seurat v5 RDS fixture and a deterministic
+H5Seurat compatibility fixture under `testdata/`.
+
 GO enrichment is the only current workflow that sends data outside the local
 container. An explicit Run action submits only the displayed marker gene symbols
 and a non-identifying cluster description to the

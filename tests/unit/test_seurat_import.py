@@ -11,6 +11,7 @@ from clustbuster.services.exports import ANNOTATION_COLUMN, PROVENANCE_KEY, Work
 from clustbuster.services.workspaces import configure_workspace
 
 FIXTURE = Path(__file__).parents[2] / "testdata" / "so.rds"
+H5SEURAT_FIXTURE = Path(__file__).parents[2] / "testdata" / "so.h5seurat"
 
 
 def test_load_genuine_seurat_v5_fixture() -> None:
@@ -48,6 +49,28 @@ def test_probe_recognizes_compressed_rds_fixture() -> None:
     result = SeuratImporter().probe(FIXTURE)
     assert result.format is ObjectFormat.SEURAT
     assert result.confidence == 0.8
+
+
+def test_load_h5seurat_fixture() -> None:
+    result = SeuratImporter().load(H5SEURAT_FIXTURE)
+
+    assert result.report.source_format is ObjectFormat.SEURAT
+    assert result.adata.shape == (12, 5)
+    assert list(result.adata.obs_names) == [f"h5-cell-{index:03d}" for index in range(12)]
+    assert list(result.adata.var_names) == ["CD3D", "IL7R", "LYZ", "MS4A1", "NKG7"]
+    assert result.adata.obs["seurat_clusters"].tolist() == ["0"] * 4 + ["1"] * 4 + ["2"] * 4
+    assert result.report.candidate_cluster_columns[0] == "seurat_clusters"
+    assert result.report.embeddings == ("X_umap",)
+    assert list(result.adata.layers) == ["counts"]
+    assert sparse.issparse(result.adata.X)
+    assert result.report.mapping_decisions["X"] == "Seurat RNA primary matrix -> adata.X"
+    assert result.report.unsupported_components == []
+
+
+def test_probe_recognizes_h5seurat_fixture() -> None:
+    result = SeuratImporter().probe(H5SEURAT_FIXTURE)
+    assert result.format is ObjectFormat.SEURAT
+    assert result.confidence == 1.0
 
 
 def test_non_seurat_rds_has_actionable_error(tmp_path: Path) -> None:
