@@ -63,10 +63,11 @@ supported.
 Set `CLUSTBUSTER_ENABLE_SEURAT_IMPORT=1` to accept `.rds` and `.h5seurat` uploads
 (enabled by `compose.dev.yml`). The tested RDS contract is an in-memory Seurat v5
 object with one active assay, cell metadata, compatible counts/scale layers, and
-standard dimensional reductions. The adapter pins `readseurat==0.1.0`, repairs its
-known Assay5 feature-coordinate conversion defect, and reports non-active assays as
-unsupported rather than silently dropping them. On-disk layers, custom S4 extensions,
-and native RDS export remain unsupported.
+standard dimensional reductions. Compatible secondary assays with identical cell and
+feature identifiers are mapped to namespaced layers; incompatible assays are reported.
+The adapter pins `readseurat==0.1.0` and repairs its known Assay5 feature-coordinate
+conversion defect. On-disk layers, custom S4 extensions, and native RDS export remain
+unsupported.
 
 GO enrichment is the only current workflow that sends data outside the local
 container. An explicit Run action submits only the displayed marker gene symbols

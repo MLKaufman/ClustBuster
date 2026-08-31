@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from clustbuster.core.workspace import workspace_from_import
-from clustbuster.models import ExpressionSource
+from clustbuster.models import ExpressionSource, ObjectFormat
 from clustbuster.services.imports import ImportService, SessionFiles, UploadError
 from clustbuster.services.workspaces import configure_workspace
 
@@ -67,3 +67,23 @@ def test_workspace_configuration_initializes_annotation_state(tmp_path: Path) ->
     assert workspace.expression_source.label == "layer:counts"
     assert [record.annotation for record in workspace.annotations.records()] == ["0", "1"]
 
+
+def test_import_service_dispatches_enabled_seurat_upload(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "testdata" / "so.rds"
+    session_files = SessionFiles.create(tmp_path / "sessions")
+    result = ImportService(max_upload_mb=10, enable_seurat_import=True).import_upload(
+        {"name": "study.rds", "datapath": str(source)}, session_files
+    )
+
+    assert result.report.source_format is ObjectFormat.SEURAT
+    assert result.report.source_filename == "study.rds"
+    assert len(list(session_files.uploads.glob("*.rds"))) == 1
+
+
+def test_import_service_rejects_seurat_when_feature_disabled(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "testdata" / "so.rds"
+    session_files = SessionFiles.create(tmp_path / "sessions")
+    with pytest.raises(UploadError, match="recognized H5AD"):
+        ImportService(max_upload_mb=10).import_upload(
+            {"name": "study.rds", "datapath": str(source)}, session_files
+        )

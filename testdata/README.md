@@ -7,22 +7,22 @@ using biological or identifying data.
 
 - `clustbuster-demo.h5ad` — 90 cells, 10 genes, five clusters, sparse `X`, `raw`,
   `counts` and `log1p` layers, UMAP/PCA embeddings, and categorical cell metadata.
+- `so.rds` — genuine Seurat v5 object produced with SeuratObject 5.4.0: 40 cells,
+  eight genes, sparse counts, four `seurat_clusters`, cell metadata, a UMAP
+  reduction, a compatible secondary assay, and an intentionally incompatible ADT
+  assay for mapping/reporting tests.
 
-Regenerate it with:
+Regenerate the fixtures with:
 
 ```bash
 uv run python scripts/create_test_fixtures/generate_h5ad.py
+Rscript scripts/create_test_fixtures/generate_rds.R seurat
 ```
 
 ## Planned compatibility fixtures
 
-- `so.rds` — genuine Seurat object; added when the Phase 3 Seurat adapter is built.
 - `sce.rds` — genuine SingleCellExperiment object; added when the Phase 4 SCE adapter
   is built.
 
-The reproducible R generator already lives at
-`scripts/create_test_fixtures/generate_rds.R`. It deliberately refuses to create
-substitute files when the real Seurat and SingleCellExperiment packages are absent.
-This machine currently has R but not those packages, so no misleading placeholder RDS
-files are committed.
-
+The R generator accepts `seurat`, `sce`, or `all` and refuses to create substitute
+files when the corresponding real R package is absent.

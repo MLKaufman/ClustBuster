@@ -64,7 +64,24 @@ def candidate_cluster_columns(obs: pd.DataFrame) -> tuple[str, ...]:
         )
         if is_candidate:
             candidates.append(str(column))
-    return tuple(candidates)
+
+    def priority(name: str) -> tuple[int, int]:
+        normalized = name.lower()
+        conventional = {
+            "clustbuster_cluster",
+            "seurat_clusters",
+            "leiden",
+            "louvain",
+        }
+        if normalized in conventional:
+            rank = 0
+        elif "cluster" in normalized or "snn_res" in normalized:
+            rank = 1
+        else:
+            rank = 2
+        return rank, candidates.index(name)
+
+    return tuple(sorted(candidates, key=priority))
 
 
 def compatible_embeddings(adata: AnnData) -> tuple[str, ...]:
@@ -96,4 +113,3 @@ def validate_selected_columns(
     if embedding_key is not None and embedding_key not in compatible_embeddings(adata):
         errors.append(f"Incompatible embedding: {embedding_key}")
     return errors
-

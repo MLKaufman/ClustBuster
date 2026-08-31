@@ -1,4 +1,4 @@
-"""Session-safe upload handling and H5AD import orchestration."""
+"""Session-safe upload handling and format-aware import orchestration."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from clustbuster.io.base import ObjectImporter
 from clustbuster.io.h5ad import H5adImporter
-from clustbuster.models import ImportResult
+from clustbuster.io.seurat import SeuratImporter
+from clustbuster.models import ImportOptions, ImportResult, ObjectFormat
 
 
 class UploadError(ValueError):
@@ -54,14 +56,16 @@ class SessionFiles:
 
 
 class ImportService:
-    def __init__(self, max_upload_mb: int, importer: H5adImporter | None = None) -> None:
+    def __init__(self, max_upload_mb: int, *, enable_seurat_import: bool = False) -> None:
         self.max_upload_bytes = max_upload_mb * 1024 * 1024
-        self.importer = importer or H5adImporter()
+        self.importers: list[ObjectImporter] = [H5adImporter()]
+        if enable_seurat_import:
+            self.importers.append(SeuratImporter())
 
     def import_upload(
         self, upload: Mapping[str, Any], session_files: SessionFiles
     ) -> ImportResult:
-        original_name = str(upload.get("name", "uploaded.h5ad"))
+        original_name = str(upload.get("name", "uploaded"))
         source_path = Path(str(upload.get("datapath", "")))
         if not source_path.is_file():
             raise UploadError("The uploaded temporary file is unavailable; please upload it again")
@@ -75,8 +79,18 @@ class ImportService:
         if free_bytes < size * 2:
             raise UploadError("There is not enough session disk space to safely import this file")
 
-        destination = session_files.uploads / f"{uuid4().hex}.h5ad"
+        suffix = Path(original_name).suffix.lower()
+        destination = session_files.uploads / f"{uuid4().hex}{suffix}"
         shutil.copyfile(source_path, destination)
-        result = self.importer.load(destination)
+        probes = sorted(
+            ((importer.probe(destination), importer) for importer in self.importers),
+            key=lambda item: item[0].confidence,
+            reverse=True,
+        )
+        probe, importer = probes[0]
+        if probe.format is ObjectFormat.UNKNOWN or probe.confidence <= 0:
+            supported = "H5AD, Seurat RDS, and H5Seurat" if len(self.importers) > 1 else "H5AD"
+            raise UploadError(f"The upload is not a recognized {supported} file")
+        result = importer.load(destination, ImportOptions())
         result.report.source_filename = original_name
         return result
