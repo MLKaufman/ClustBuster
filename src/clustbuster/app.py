@@ -6,15 +6,25 @@ import logging
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 from shiny import App, Inputs, Outputs, Session, reactive, render, req, ui
 from shinywidgets import output_widget, render_plotly
 
 from clustbuster import __version__
 from clustbuster.config import AppConfig
+from clustbuster.core.expression import (
+    DotPlotResult,
+    ExpressionResult,
+    aggregate_dotplot,
+    extract_expression,
+    parse_gene_list,
+)
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.models import ExpressionSource, Workspace
+from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
+from clustbuster.plotting.feature import feature_figure
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
 from clustbuster.services.workspaces import configure_workspace
@@ -101,6 +111,48 @@ app_ui = ui.page_fillable(
                 ui.output_data_frame("report_table"),
             ),
             ui.nav_panel(
+                "Feature plot",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_text_area(
+                            "feature_genes",
+                            "Genes",
+                            value="CD3D, LYZ",
+                            placeholder="Comma, space, or newline separated",
+                            rows=2,
+                        ),
+                        ui.input_action_button(
+                            "run_feature", "Run feature plot", class_="btn-primary"
+                        ),
+                        col_widths=(9, 3),
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("feature_feedback"),
+                output_widget("feature_plot", height="580px"),
+            ),
+            ui.nav_panel(
+                "Dot plot",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_text_area(
+                            "dot_genes",
+                            "Gene panel",
+                            value="CD3D, LYZ, MS4A1, NKG7",
+                            placeholder="Comma, space, or newline separated",
+                            rows=2,
+                        ),
+                        ui.input_action_button(
+                            "run_dotplot", "Run dot plot", class_="btn-primary"
+                        ),
+                        col_widths=(9, 3),
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("dotplot_feedback"),
+                output_widget("dot_plot", height="580px"),
+            ),
+            ui.nav_panel(
                 "Export",
                 ui.output_ui("export_status"),
                 ui.card(
@@ -144,6 +196,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     configured = reactive.Value(False)
     error_message = reactive.Value[str | None](None)
     revision = reactive.Value(0)
+    feature_result = reactive.Value[ExpressionResult | None](None)
+    feature_error = reactive.Value[str | None](None)
+    dotplot_result = reactive.Value[DotPlotResult | None](None)
+    dotplot_error = reactive.Value[str | None](None)
 
     session.on_ended(session_files.cleanup)
 
@@ -243,6 +299,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "annotation_cluster", choices=cluster_choices, session=session
             )
             configured.set(True)
+            feature_result.set(None)
+            dotplot_result.set(None)
             revision.set(revision.get() + 1)
             ui.notification_show("Workspace configured", type="message", session=session)
         except Exception as exc:
@@ -334,6 +392,95 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ("Expression sources", ", ".join(x.label for x in report.expression_sources)),
         ]
         return pd.DataFrame(rows, columns=["Workspace component", "Detected values"])
+
+    @reactive.effect
+    @reactive.event(input.run_feature)
+    def run_feature_plot() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        feature_error.set(None)
+        try:
+            genes = parse_gene_list(str(input.feature_genes()), limit=6)
+            result = extract_expression(current.adata, current.expression_source, genes)
+            feature_result.set(result)
+        except Exception as exc:
+            feature_result.set(None)
+            feature_error.set(str(exc))
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render.ui
+    def feature_feedback() -> ui.TagChild:
+        error = feature_error.get()
+        result = feature_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, enter genes, and run the plot.")
+        missing = ", ".join((*result.report.missing, *result.report.ambiguous))
+        if missing:
+            return ui.div(f"Not plotted: {missing}", class_="alert alert-warning")
+        return ui.div(
+            f"Matched {len(result.report.matched)} gene(s).", class_="alert alert-success"
+        )
+
+    @output
+    @render_plotly
+    def feature_plot() -> Any:
+        current = workspace.get()
+        result = feature_result.get()
+        req(current is not None and configured.get() and result is not None)
+        assert current is not None and result is not None and current.embedding_key is not None
+        coordinates = np.asarray(current.adata.obsm[current.embedding_key])
+        return feature_figure(coordinates, current.adata.obs_names.astype(str).tolist(), result)
+
+    @reactive.effect
+    @reactive.event(input.run_dotplot)
+    def run_dot_plot() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get() and current.cluster_column is not None)
+        assert current is not None and current.cluster_column is not None
+        dotplot_error.set(None)
+        try:
+            genes = parse_gene_list(str(input.dot_genes()), limit=24)
+            result = aggregate_dotplot(
+                current.adata,
+                current.expression_source,
+                current.cluster_column,
+                genes,
+            )
+            dotplot_result.set(result)
+        except Exception as exc:
+            dotplot_result.set(None)
+            dotplot_error.set(str(exc))
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render.ui
+    def dotplot_feedback() -> ui.TagChild:
+        error = dotplot_error.get()
+        result = dotplot_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, enter a gene panel, and run the plot.")
+        missing = ", ".join((*result.report.missing, *result.report.ambiguous))
+        if missing:
+            return ui.div(f"Not plotted: {missing}", class_="alert alert-warning")
+        return ui.div(
+            f"Aggregated {len(result.report.matched)} gene(s) across "
+            f"{result.values['cluster_id'].nunique()} clusters.",
+            class_="alert alert-success",
+        )
+
+    @output
+    @render_plotly
+    def dot_plot() -> Any:
+        result = dotplot_result.get()
+        req(result is not None)
+        assert result is not None
+        return dotplot_figure(result)
 
     @output
     @render.ui

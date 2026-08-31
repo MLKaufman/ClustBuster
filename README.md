@@ -28,6 +28,7 @@ exports before the session or container is removed.
 - Session-isolated H5AD upload, structural validation, and import reports
 - Cluster-column, embedding, and expression-source configuration
 - Interactive Plotly/WebGL embedding colored by source cluster or annotation
+- Sparse-safe multi-gene feature plots and cluster-by-gene dot plots
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
@@ -35,5 +36,5 @@ exports before the session or container is removed.
 - Configuration from a single validated startup object
 - Shiny application and non-root Docker image
 
-Feature and dot plots are being built next. Seurat and SingleCellExperiment RDS
+Manual fixtures are documented in `testdata/`. Seurat and SingleCellExperiment RDS
 round-tripping is not currently supported.
