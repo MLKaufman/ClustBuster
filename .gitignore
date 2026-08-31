@@ -11,5 +11,6 @@ htmlcov/
 dist/
 build/
 .env
+deployment/.env.production
+deployment/certs/*.pem
 workspace/
-

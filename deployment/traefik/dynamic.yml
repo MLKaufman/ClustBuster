@@ -1,0 +1,34 @@
+http:
+  routers:
+    clustbuster:
+      entryPoints: [websecure]
+      rule: PathPrefix(`/`)
+      service: shinyproxy
+      middlewares: [security-headers, compression]
+      tls:
+        options: modern
+  services:
+    shinyproxy:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: http://shinyproxy:8080
+  middlewares:
+    compression:
+      compress: {}
+    security-headers:
+      headers:
+        contentTypeNosniff: true
+        customFrameOptionsValue: SAMEORIGIN
+        referrerPolicy: no-referrer
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+
+tls:
+  certificates:
+    - certFile: /certs/fullchain.pem
+      keyFile: /certs/privkey.pem
+  options:
+    modern:
+      minVersion: VersionTLS12
+      sniStrict: false

@@ -4,7 +4,8 @@
 
 ClustBuster is a Python-first web application for assisted annotation of
 single-cell RNA-sequencing clusters. The current Python-native application supports
-H5AD plus a tested Seurat v5 RDS/H5Seurat compatibility slice.
+H5AD, tested Seurat v4/v5 RDS and H5Seurat objects, and tested in-memory
+SingleCellExperiment RDS objects.
 
 ## Development
 
@@ -24,6 +25,10 @@ docker build -t clustbuster:test .
 scripts/container_smoke.sh clustbuster:test
 ```
 
+Production deployment templates for Traefik and ShinyProxy are under `deployment/`.
+See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for TLS, authentication, resource
+limits, session lifecycle, upgrades, troubleshooting, and cleanup.
+
 The application is intentionally session-scoped. Uploaded data will live in an
 ephemeral workspace and the source upload will never be modified. Download all
 exports before the session or container is removed.
@@ -32,7 +37,8 @@ exports before the session or container is removed.
 
 - Typed, format-independent workspace and expression-source models
 - Independent cluster annotation state with type-safe cluster identifiers
-- Session-isolated H5AD and Seurat upload, structural validation, and import reports
+- Session-isolated H5AD, Seurat, and SingleCellExperiment upload, structural validation,
+  and import reports
 - Cluster-column, embedding, and expression-source configuration
 - Interactive Plotly/WebGL embedding colored by source cluster or annotation
 - Sparse-safe multi-gene feature plots and cluster-by-gene dot plots

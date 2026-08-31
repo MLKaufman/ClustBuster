@@ -1,0 +1,95 @@
+name: clustbuster-production
+
+services:
+  clustbuster-image:
+    profiles: [build]
+    image: ${CLUSTBUSTER_IMAGE:-clustbuster:production}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["python", "-c", "print('ClustBuster image built')"]
+
+  shinyproxy:
+    image: openanalytics/shinyproxy:3.2.4
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    group_add:
+      - ${DOCKER_GID:?Set DOCKER_GID to the host Docker socket group id}
+    environment:
+      CLUSTBUSTER_IMAGE: ${CLUSTBUSTER_IMAGE:-clustbuster:production}
+      CLUSTBUSTER_ADMIN_USER: ${CLUSTBUSTER_ADMIN_USER:-admin}
+      CLUSTBUSTER_ADMIN_PASSWORD: ${CLUSTBUSTER_ADMIN_PASSWORD:?Set a strong admin password}
+      CLUSTBUSTER_USER: ${CLUSTBUSTER_USER:-scientist}
+      CLUSTBUSTER_USER_PASSWORD: ${CLUSTBUSTER_USER_PASSWORD:?Set a strong scientist password}
+      CLUSTBUSTER_IDLE_TIMEOUT_MS: ${CLUSTBUSTER_IDLE_TIMEOUT_MS:-900000}
+      CLUSTBUSTER_MAX_LIFETIME_MINUTES: ${CLUSTBUSTER_MAX_LIFETIME_MINUTES:-480}
+      CLUSTBUSTER_MAX_SESSIONS: ${CLUSTBUSTER_MAX_SESSIONS:-4}
+      CLUSTBUSTER_SESSION_CPUS: ${CLUSTBUSTER_SESSION_CPUS:-4}
+      CLUSTBUSTER_SESSION_MEMORY: ${CLUSTBUSTER_SESSION_MEMORY:-16G}
+      CLUSTBUSTER_MAX_UPLOAD_MB: ${CLUSTBUSTER_MAX_UPLOAD_MB:-2048}
+    volumes:
+      - ./shinyproxy/application.yml:/opt/shinyproxy/application.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      # ShinyProxy's Unix-socket client extracts a native jffi stub here.
+      - /tmp:rw,exec,nosuid,nodev,size=256M,mode=1777
+    networks:
+      - edge
+      - apps
+      - egress
+    mem_limit: 1G
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/8080'"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  traefik:
+    image: traefik:v3.6
+    restart: unless-stopped
+    depends_on:
+      shinyproxy:
+        condition: service_healthy
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - ${CLUSTBUSTER_HTTP_PORT:-80}:80
+      - ${CLUSTBUSTER_HTTPS_PORT:-443}:443
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - ./certs:/certs:ro
+    networks:
+      - edge
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    mem_limit: 256M
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  edge:
+    name: clustbuster-edge
+  apps:
+    name: clustbuster-apps
+    internal: true
+  egress:
+    name: clustbuster-egress

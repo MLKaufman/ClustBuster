@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: ClustBuster
+server:
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 8h
+      cookie:
+        http-only: true
+        secure: true
+        same-site: strict
+
+proxy:
+  title: ClustBuster
+  landing-page: SingleApp
+  bind-address: 0.0.0.0
+  port: 8080
+  heartbeat-rate: 10000
+  heartbeat-timeout: ${CLUSTBUSTER_IDLE_TIMEOUT_MS:900000}
+  default-proxy-max-lifetime: ${CLUSTBUSTER_MAX_LIFETIME_MINUTES:480}
+  default-stop-proxy-on-logout: true
+  stop-proxies-on-shutdown: true
+  recover-running-proxies: false
+  max-total-instances: ${CLUSTBUSTER_MAX_SESSIONS:4}
+  authentication: simple
+  admin-groups: [administrators]
+  users:
+    - name: ${CLUSTBUSTER_ADMIN_USER:admin}
+      password: ${CLUSTBUSTER_ADMIN_PASSWORD}
+      groups: [administrators, scientists]
+    - name: ${CLUSTBUSTER_USER:scientist}
+      password: ${CLUSTBUSTER_USER_PASSWORD}
+      groups: [scientists]
+  container-backend: docker
+  container-wait-time: 60000
+  docker:
+    internal-networking: true
+    default-container-network: clustbuster-apps
+    image-pull-policy: Never
+    privileged: false
+  specs:
+    - id: clustbuster
+      display-name: ClustBuster
+      description: Assisted single-cell cluster annotation
+      access-groups: [scientists]
+      container-image: ${CLUSTBUSTER_IMAGE:clustbuster:production}
+      container-cmd:
+        - shiny
+        - run
+        - --host
+        - 0.0.0.0
+        - --port
+        - "8000"
+        - clustbuster.app:app
+      port: 8000
+      container-network: clustbuster-apps
+      container-network-connections: [clustbuster-egress]
+      container-cpu-limit: ${CLUSTBUSTER_SESSION_CPUS:4}
+      container-memory-limit: ${CLUSTBUSTER_SESSION_MEMORY:16G}
+      max-instances: 1
+      max-total-instances: ${CLUSTBUSTER_MAX_SESSIONS:4}
+      heartbeat-timeout: ${CLUSTBUSTER_IDLE_TIMEOUT_MS:900000}
+      max-lifetime: ${CLUSTBUSTER_MAX_LIFETIME_MINUTES:480}
+      stop-on-logout: true
+      container-env:
+        CLUSTBUSTER_LOG_LEVEL: INFO
+        CLUSTBUSTER_MAX_UPLOAD_MB: ${CLUSTBUSTER_MAX_UPLOAD_MB:2048}
+        CLUSTBUSTER_ENABLE_SEURAT_IMPORT: "1"
+        CLUSTBUSTER_ENABLE_SCE_IMPORT: "1"
+      labels:
+        app.kubernetes.io/name: clustbuster
+        app.kubernetes.io/managed-by: shinyproxy
+
+logging:
+  level:
+    root: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%level logger=%logger{36} msg=%msg%n"
