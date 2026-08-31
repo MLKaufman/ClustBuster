@@ -173,6 +173,9 @@ class ReferenceSummary:
     name: str
     species: str
     tissue: str | None = None
+    disease: str | None = None
+    assay: str | None = None
+    platform: str | None = None
     resource_version: str | None = None
 
 

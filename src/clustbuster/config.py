@@ -31,6 +31,8 @@ class AppConfig:
     max_upload_mb: int = 2048
     cache_limit_mb: int = 1024
     enrichment_timeout_seconds: int = 20
+    marker_catalog_path: Path = Path("resources/marker_sets/immune_markers.csv")
+    reference_root: Path = Path("resources/reference_matrices")
     log_level: str = "INFO"
     enable_seurat_import: bool = False
     enable_sce_import: bool = False
@@ -57,6 +59,18 @@ class AppConfig:
                 os.getenv(f"{prefix}ENRICHMENT_TIMEOUT_SECONDS", "20"),
                 f"{prefix}ENRICHMENT_TIMEOUT_SECONDS",
             ),
+            marker_catalog_path=Path(
+                os.getenv(
+                    f"{prefix}MARKER_CATALOG_PATH",
+                    "resources/marker_sets/immune_markers.csv",
+                )
+            ).expanduser(),
+            reference_root=Path(
+                os.getenv(
+                    f"{prefix}REFERENCE_ROOT",
+                    "resources/reference_matrices",
+                )
+            ).expanduser(),
             log_level=log_level,
             enable_seurat_import=os.getenv(f"{prefix}ENABLE_SEURAT_IMPORT", "0") == "1",
             enable_sce_import=os.getenv(f"{prefix}ENABLE_SCE_IMPORT", "0") == "1",

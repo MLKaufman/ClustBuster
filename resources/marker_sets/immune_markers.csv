@@ -1,0 +1,12 @@
+cell_type,gene,species,tissue,direction,evidence,citation,confidence,resource_version
+T cell,CD3D,human,blood,positive,canonical lineage marker,Bundled demonstration catalog,0.98,1.0.0
+T cell,IL7R,human,blood,positive,helper-memory marker,Bundled demonstration catalog,0.90,1.0.0
+T cell,NKG7,human,blood,negative,cytotoxic-lineage exclusion,Bundled demonstration catalog,0.70,1.0.0
+Myeloid cell,LYZ,human,blood,positive,canonical lineage marker,Bundled demonstration catalog,0.98,1.0.0
+Myeloid cell,S100A8,human,blood,positive,inflammatory myeloid marker,Bundled demonstration catalog,0.92,1.0.0
+Myeloid cell,FCGR3A,human,blood,positive,monocyte subset marker,Bundled demonstration catalog,0.86,1.0.0
+B cell,MS4A1,human,blood,positive,canonical lineage marker,Bundled demonstration catalog,0.98,1.0.0
+B cell,CD79A,human,blood,positive,B-cell receptor component,Bundled demonstration catalog,0.95,1.0.0
+NK cell,NKG7,human,blood,positive,cytotoxic lymphocyte marker,Bundled demonstration catalog,0.95,1.0.0
+NK cell,GNLY,human,blood,positive,NK effector marker,Bundled demonstration catalog,0.98,1.0.0
+Platelet,PPBP,human,blood,positive,canonical platelet marker,Bundled demonstration catalog,0.98,1.0.0

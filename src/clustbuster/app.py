@@ -25,13 +25,22 @@ from clustbuster.core.markers import MarkerResult, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
-from clustbuster.models import ExpressionSource, Workspace
+from clustbuster.models import (
+    CellTypeSummary,
+    ExpressionSource,
+    LoadedReference,
+    MarkerSet,
+    ReferenceFilters,
+    Workspace,
+)
 from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.enrichment import enrichment_figure
 from clustbuster.plotting.feature import feature_figure
 from clustbuster.plotting.heatmap import marker_heatmap_figure
 from clustbuster.plotting.module import module_score_figure
+from clustbuster.resources.markers.csv import CsvMarkerProvider
+from clustbuster.resources.references.local import LocalReferenceProvider
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
 from clustbuster.services.workspaces import configure_workspace
@@ -158,6 +167,46 @@ app_ui = ui.page_fillable(
                 ),
                 ui.output_ui("dotplot_feedback"),
                 output_widget("dot_plot", height="580px"),
+            ),
+            ui.nav_panel(
+                "Resources",
+                ui.output_ui("provider_status"),
+                ui.card(
+                    ui.card_header("Marker catalog"),
+                    ui.layout_columns(
+                        ui.input_text(
+                            "marker_query", "Cell-type search", placeholder="e.g. T cell"
+                        ),
+                        ui.input_select(
+                            "marker_species", "Species", {"human": "Human"}
+                        ),
+                        ui.input_select("marker_tissue", "Tissue", {"blood": "Blood"}),
+                        ui.input_action_button(
+                            "search_markers", "Search catalog", class_="btn-primary"
+                        ),
+                        col_widths=(5, 2, 2, 3),
+                    ),
+                    ui.output_data_frame("marker_search_table"),
+                    ui.layout_columns(
+                        ui.input_select("catalog_cell_type", "Cell type", {}),
+                        ui.input_action_button("load_marker_set", "Load marker set"),
+                        ui.input_action_button(
+                            "use_markers_feature", "Use in feature plot"
+                        ),
+                        ui.input_action_button("use_markers_dot", "Use in dot plot"),
+                        col_widths=(4, 3, 3, 2),
+                    ),
+                    ui.output_ui("marker_set_feedback"),
+                    ui.output_data_frame("marker_set_table"),
+                    fill=False,
+                ),
+                ui.card(
+                    ui.card_header("Local reference matrices"),
+                    ui.output_ui("reference_controls"),
+                    ui.output_ui("reference_feedback"),
+                    ui.output_data_frame("reference_table"),
+                    fill=False,
+                ),
             ),
             ui.nav_panel(
                 "Module scores",
@@ -322,6 +371,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     enrichment_client = EnrichrClient(
         timeout_seconds=config.enrichment_timeout_seconds
     )
+    marker_provider = CsvMarkerProvider(config.marker_catalog_path)
+    reference_provider = LocalReferenceProvider(config.reference_root)
+    marker_search_results = reactive.Value[list[CellTypeSummary]]([])
+    loaded_marker_set = reactive.Value[MarkerSet | None](None)
+    loaded_reference = reactive.Value[LoadedReference | None](None)
+    marker_resource_error = reactive.Value[str | None](None)
+    reference_resource_error = reactive.Value[str | None](None)
 
     session.on_ended(session_files.cleanup)
 
@@ -607,6 +663,194 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(result is not None)
         assert result is not None
         return dotplot_figure(result)
+
+    @output
+    @render.ui
+    def provider_status() -> ui.TagChild:
+        marker_status = marker_provider.status()
+        reference_status = reference_provider.status()
+        status_class = (
+            "alert alert-success"
+            if marker_status.available and reference_status.available
+            else "alert alert-warning"
+        )
+        return ui.div(
+            ui.strong("Resource status"),
+            ui.p(f"Markers: {marker_status.message} · References: {reference_status.message}"),
+            class_=status_class,
+        )
+
+    @reactive.effect
+    @reactive.event(input.search_markers)
+    def search_marker_catalog() -> None:
+        marker_resource_error.set(None)
+        loaded_marker_set.set(None)
+        try:
+            results = marker_provider.search_cell_types(
+                str(input.marker_query()),
+                species=str(input.marker_species()),
+                tissue=str(input.marker_tissue()),
+            )
+            marker_search_results.set(results)
+            ui.update_select(
+                "catalog_cell_type",
+                choices={item.cell_type: item.cell_type for item in results},
+                session=session,
+            )
+            if not results:
+                marker_resource_error.set("No matching cell types were found")
+        except Exception as exc:
+            marker_search_results.set([])
+            marker_resource_error.set(str(exc))
+
+    @output
+    @render.data_frame
+    def marker_search_table() -> pd.DataFrame:
+        results = marker_search_results.get()
+        return pd.DataFrame(
+            [
+                {
+                    "Cell type": item.cell_type,
+                    "Species": item.species,
+                    "Tissue": item.tissue,
+                    "Markers": item.marker_count,
+                }
+                for item in results
+            ]
+        )
+
+    @reactive.effect
+    @reactive.event(input.load_marker_set)
+    def load_catalog_marker_set() -> None:
+        marker_resource_error.set(None)
+        try:
+            result = marker_provider.get_markers(
+                str(input.catalog_cell_type()),
+                species=str(input.marker_species()),
+                tissue=str(input.marker_tissue()),
+            )
+            loaded_marker_set.set(result)
+        except Exception as exc:
+            loaded_marker_set.set(None)
+            marker_resource_error.set(str(exc))
+
+    @output
+    @render.ui
+    def marker_set_feedback() -> ui.TagChild:
+        error = marker_resource_error.get()
+        marker_set = loaded_marker_set.get()
+        if error:
+            return ui.div(error, class_="alert alert-warning")
+        if marker_set is None:
+            return ui.p("Search for a cell type and load its marker set.")
+        positive = sum(record.direction == "positive" for record in marker_set.records)
+        negative = len(marker_set.records) - positive
+        return ui.div(
+            f"Loaded {positive} positive and {negative} negative marker(s) for "
+            f"{marker_set.cell_type}.",
+            class_="alert alert-success",
+        )
+
+    @output
+    @render.data_frame
+    def marker_set_table() -> pd.DataFrame:
+        marker_set = loaded_marker_set.get()
+        if marker_set is None:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [
+                {
+                    "Gene": record.gene,
+                    "Direction": record.direction,
+                    "Confidence": record.confidence,
+                    "Evidence": record.evidence,
+                }
+                for record in marker_set.records
+            ]
+        )
+
+    def _positive_catalog_genes() -> str:
+        marker_set = loaded_marker_set.get()
+        req(marker_set is not None)
+        assert marker_set is not None
+        genes = [
+            record.gene for record in marker_set.records if record.direction == "positive"
+        ]
+        return ", ".join(genes)
+
+    @reactive.effect
+    @reactive.event(input.use_markers_feature)
+    def use_catalog_markers_in_feature_plot() -> None:
+        ui.update_text_area("feature_genes", value=_positive_catalog_genes(), session=session)
+        ui.notification_show("Feature-plot genes updated", type="message", session=session)
+
+    @reactive.effect
+    @reactive.event(input.use_markers_dot)
+    def use_catalog_markers_in_dot_plot() -> None:
+        ui.update_text_area("dot_genes", value=_positive_catalog_genes(), session=session)
+        ui.notification_show("Dot-plot genes updated", type="message", session=session)
+
+    @output
+    @render.ui
+    def reference_controls() -> ui.TagChild:
+        try:
+            references = reference_provider.list_references(ReferenceFilters())
+        except Exception as exc:
+            return ui.div(str(exc), class_="alert alert-warning")
+        return ui.layout_columns(
+            ui.input_select(
+                "reference_id",
+                "Reference",
+                {item.reference_id: item.name for item in references},
+            ),
+            ui.input_action_button("validate_reference", "Validate reference"),
+            col_widths=(8, 4),
+        )
+
+    @reactive.effect
+    @reactive.event(input.validate_reference)
+    def validate_local_reference() -> None:
+        reference_resource_error.set(None)
+        try:
+            loaded_reference.set(
+                reference_provider.load_reference(str(input.reference_id()))
+            )
+        except Exception as exc:
+            loaded_reference.set(None)
+            reference_resource_error.set(str(exc))
+
+    @output
+    @render.ui
+    def reference_feedback() -> ui.TagChild:
+        error = reference_resource_error.get()
+        reference = loaded_reference.get()
+        if error:
+            return ui.div(error, class_="alert alert-warning")
+        if reference is None:
+            return ui.p("Choose a reference to validate its schema and checksum.")
+        return ui.div(
+            f"Validated {reference.summary.name}: {reference.metadata['gene_count']} genes "
+            f"across {len(reference.metadata['cell_types'])} cell types.",
+            class_="alert alert-success",
+        )
+
+    @output
+    @render.data_frame
+    def reference_table() -> pd.DataFrame:
+        references = reference_provider.list_references(ReferenceFilters())
+        return pd.DataFrame(
+            [
+                {
+                    "Reference": item.name,
+                    "Species": item.species,
+                    "Tissue": item.tissue,
+                    "Disease/context": item.disease,
+                    "Assay": item.assay,
+                    "Version": item.resource_version,
+                }
+                for item in references
+            ]
+        )
 
     @reactive.effect
     @reactive.event(input.module_preset, ignore_init=True)

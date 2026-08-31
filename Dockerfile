@@ -20,6 +20,7 @@ RUN groupadd --system clustbuster \
     && mkdir -p /app /workspace \
     && chown -R clustbuster:clustbuster /app /workspace
 COPY --from=builder /opt/venv /opt/venv
+COPY --chown=clustbuster:clustbuster resources /app/resources
 WORKDIR /app
 USER clustbuster
 EXPOSE 8000

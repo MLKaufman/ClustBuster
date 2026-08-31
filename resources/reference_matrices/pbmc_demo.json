@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "reference_id": "pbmc-demo-v1",
+  "name": "PBMC demonstration reference",
+  "species": "human",
+  "tissue": "blood",
+  "disease": "healthy",
+  "assay": "single-cell RNA-seq",
+  "platform": "synthetic",
+  "source_dataset": "ClustBuster demonstration fixture",
+  "citation": "Bundled synthetic resource; not for biological interpretation",
+  "resource_version": "1.0.0",
+  "matrix": "pbmc_demo.csv",
+  "checksum": "5db7fcb79acfbc7e2acfc376b912c9e9bf4b659d19a28d2b3bc7cb092474a3bb"
+}

@@ -42,6 +42,8 @@ exports before the session or container is removed.
   multiple-testing correction, ranked tables, and cluster heatmaps
 - GO Biological Process enrichment through a replaceable Enrichr adapter,
   with ranked terms and an interactive significance summary
+- Validated local CSV marker catalogs and CSV/TSV/Parquet reference matrices,
+  including provider health, filtering, checksums, and bundled demonstration data
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
@@ -58,3 +60,14 @@ container. An explicit Run action submits only the displayed marker gene symbols
 and a non-identifying cluster description to the
 [Ma'ayan Lab Enrichr API](https://maayanlab.cloud/Enrichr/); expression values,
 cell identifiers, and observation metadata remain local.
+
+## Local biological resources
+
+The bundled demonstration marker catalog is in `resources/marker_sets/`, and
+reference matrices plus JSON sidecars are in `resources/reference_matrices/`.
+Override them with `CLUSTBUSTER_MARKER_CATALOG_PATH` and
+`CLUSTBUSTER_REFERENCE_ROOT`. Provider files are read-only, validated before use,
+and unavailable resources degrade only the Resources panel.
+
+The bundled records are synthetic workflow fixtures, not an authoritative marker
+database or a substitute for biological review.
