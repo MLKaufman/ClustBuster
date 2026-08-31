@@ -75,11 +75,34 @@ class PreviewedAnnotation:
 class AnnotationStore:
     """Mutable annotation state that never mutates source observations."""
 
-    def __init__(self, records: Iterable[AnnotationRecord]) -> None:
+    def __init__(
+        self, records: Iterable[AnnotationRecord], *, history_limit: int = 50
+    ) -> None:
+        if history_limit < 1:
+            raise ValueError("Annotation history limit must be positive")
         self._records = {record.cluster_id.serialized: record for record in records}
+        self._history_limit = history_limit
+        self._undo_history: list[dict[str, AnnotationRecord]] = []
+        self._redo_history: list[dict[str, AnnotationRecord]] = []
+
+    def _checkpoint(self) -> None:
+        self._undo_history.append(self._records.copy())
+        if len(self._undo_history) > self._history_limit:
+            self._undo_history.pop(0)
+        self._redo_history.clear()
+
+    @property
+    def can_undo(self) -> bool:
+        return bool(self._undo_history)
+
+    @property
+    def can_redo(self) -> bool:
+        return bool(self._redo_history)
 
     @classmethod
-    def from_clusters(cls, clusters: Iterable[Any]) -> AnnotationStore:
+    def from_clusters(
+        cls, clusters: Iterable[Any], *, history_limit: int = 50
+    ) -> AnnotationStore:
         records: list[AnnotationRecord] = []
         seen: set[str] = set()
         timestamp = _utc_now()
@@ -96,7 +119,7 @@ class AnnotationStore:
                     updated_at=timestamp,
                 )
             )
-        return cls(records)
+        return cls(records, history_limit=history_limit)
 
     def __len__(self) -> int:
         return len(self._records)
@@ -139,6 +162,7 @@ class AnnotationStore:
             reference_id=reference_id,
             updated_at=_utc_now(),
         )
+        self._checkpoint()
         self._records[existing.cluster_id.serialized] = updated
         return updated
 
@@ -157,17 +181,33 @@ class AnnotationStore:
             reference_id=metadata.get("reference_id"),
             updated_at=_utc_now(),
         )
+        self._checkpoint()
         self._records[serialized_cluster] = updated
         return updated
 
     def assign_many(self, clusters: Iterable[Any], annotation: str, **metadata: Any) -> None:
+        if not annotation.strip():
+            raise ValueError("Annotation must not be empty")
         cluster_values = list(clusters)
         keys = [ClusterIdentifier.from_value(cluster).serialized for cluster in cluster_values]
         missing = [key for key in keys if key not in self._records]
         if missing:
             raise KeyError("One or more cluster identifiers are unknown")
-        for cluster in cluster_values:
-            self.assign(cluster, annotation, **metadata)
+        if not keys:
+            return
+        timestamp = _utc_now()
+        self._checkpoint()
+        for key in dict.fromkeys(keys):
+            existing = self._records[key]
+            self._records[key] = replace(
+                existing,
+                annotation=annotation.strip(),
+                source=str(metadata.get("source", "manual")),
+                notes=metadata.get("notes", existing.notes),
+                confidence=metadata.get("confidence"),
+                reference_id=metadata.get("reference_id"),
+                updated_at=timestamp,
+            )
 
     def set_notes_serialized(
         self, serialized_cluster: str, notes: str | None
@@ -176,9 +216,54 @@ class AnnotationStore:
 
         existing = self.get_serialized(serialized_cluster)
         cleaned = notes.strip() if notes and notes.strip() else None
+        if cleaned == existing.notes:
+            return existing
         updated = replace(existing, notes=cleaned, updated_at=_utc_now())
+        self._checkpoint()
         self._records[serialized_cluster] = updated
         return updated
+
+    def apply_table_edits(
+        self, edits: Iterable[tuple[str, str, str | None]]
+    ) -> tuple[AnnotationRecord, ...]:
+        """Atomically apply editable-table labels and notes as one history step."""
+
+        items = tuple(edits)
+        keys = [serialized for serialized, _, _ in items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Annotation table edits must contain each cluster once")
+        if any(not annotation.strip() for _, annotation, _ in items):
+            raise ValueError("Annotation must not be empty")
+        if any(key not in self._records for key in keys):
+            raise KeyError("One or more annotation table clusters are unknown")
+
+        changed: list[tuple[AnnotationRecord, str, str | None]] = []
+        for serialized, annotation, notes in items:
+            existing = self._records[serialized]
+            cleaned_annotation = annotation.strip()
+            cleaned_notes = notes.strip() if notes and notes.strip() else None
+            if cleaned_annotation != existing.annotation or cleaned_notes != existing.notes:
+                changed.append((existing, cleaned_annotation, cleaned_notes))
+        if not changed:
+            return ()
+
+        timestamp = _utc_now()
+        self._checkpoint()
+        updated: list[AnnotationRecord] = []
+        for existing, annotation, notes in changed:
+            annotation_changed = annotation != existing.annotation
+            record = replace(
+                existing,
+                annotation=annotation,
+                notes=notes,
+                source="manual" if annotation_changed else existing.source,
+                confidence=None if annotation_changed else existing.confidence,
+                reference_id=None if annotation_changed else existing.reference_id,
+                updated_at=timestamp,
+            )
+            self._records[record.cluster_id.serialized] = record
+            updated.append(record)
+        return tuple(updated)
 
     def apply_previewed(
         self,
@@ -197,6 +282,8 @@ class AnnotationStore:
             raise ValueError("Predicted annotations must not be empty")
         if any(key not in self._records for key in keys):
             raise KeyError("One or more predicted cluster identifiers are unknown")
+        if not items:
+            return ()
 
         timestamp = _utc_now()
         updated = tuple(
@@ -210,6 +297,7 @@ class AnnotationStore:
             )
             for item in items
         )
+        self._checkpoint()
         for record in updated:
             self._records[record.cluster_id.serialized] = record
         return updated
@@ -220,6 +308,7 @@ class AnnotationStore:
             if clusters is not None
             else [record.cluster_id for record in self.records()]
         )
+        resolved: list[ClusterIdentifier] = []
         for target in targets:
             cluster_id = (
                 target
@@ -229,12 +318,32 @@ class AnnotationStore:
             existing = self._records.get(cluster_id.serialized)
             if existing is None:
                 raise KeyError(f"Unknown cluster identifier: {target!r}")
+            resolved.append(cluster_id)
+        if not resolved:
+            return
+        self._checkpoint()
+        timestamp = _utc_now()
+        for cluster_id in resolved:
             self._records[cluster_id.serialized] = AnnotationRecord(
                 cluster_id=cluster_id,
                 annotation=cluster_id.display,
                 source="imported",
-                updated_at=_utc_now(),
+                updated_at=timestamp,
             )
+
+    def undo(self) -> tuple[AnnotationRecord, ...]:
+        if not self._undo_history:
+            raise ValueError("There are no annotation changes to undo")
+        self._redo_history.append(self._records.copy())
+        self._records = self._undo_history.pop()
+        return self.records()
+
+    def redo(self) -> tuple[AnnotationRecord, ...]:
+        if not self._redo_history:
+            raise ValueError("There are no annotation changes to redo")
+        self._undo_history.append(self._records.copy())
+        self._records = self._redo_history.pop()
+        return self.records()
 
     def annotation_for(self, cluster: Any) -> str:
         return self.get(cluster).annotation

@@ -3,8 +3,8 @@
 ![ClustBuster logo](img/clustbuster-logo.png)
 
 ClustBuster is a Python-first web application for assisted annotation of
-single-cell RNA-sequencing clusters. The current AnnData-native MVP supports
-H5AD input.
+single-cell RNA-sequencing clusters. The current Python-native application supports
+H5AD plus a tested Seurat v5 RDS/H5Seurat compatibility slice.
 
 ## Development
 
@@ -32,7 +32,7 @@ exports before the session or container is removed.
 
 - Typed, format-independent workspace and expression-source models
 - Independent cluster annotation state with type-safe cluster identifiers
-- Session-isolated H5AD upload, structural validation, and import reports
+- Session-isolated H5AD and Seurat upload, structural validation, and import reports
 - Cluster-column, embedding, and expression-source configuration
 - Interactive Plotly/WebGL embedding colored by source cluster or annotation
 - Sparse-safe multi-gene feature plots and cluster-by-gene dot plots
@@ -46,7 +46,7 @@ exports before the session or container is removed.
   including provider health, filtering, checksums, and bundled demonstration data
 - Reference-based cluster annotation through a pinned `pyclustifyr` adapter, with
   shared-gene validation, correlation previews, thresholds, and explicit apply/discard
-- Autosaving cluster annotation controls
+- Persistent editable annotation/notes sidebar with selected/all reset and bounded undo/redo
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
 - Import and resource-provider protocols
@@ -54,8 +54,19 @@ exports before the session or container is removed.
 - Shiny application and non-root Docker image
 - Automated independent-session and hardened-container smoke tests
 
-Manual fixtures are documented in `testdata/`. Seurat and SingleCellExperiment RDS
-round-tripping is not currently supported.
+Manual fixtures are documented in `testdata/`. Imported Seurat objects export as CSV
+and annotated H5AD; native Seurat or SingleCellExperiment RDS write-back is not
+supported.
+
+## Seurat compatibility
+
+Set `CLUSTBUSTER_ENABLE_SEURAT_IMPORT=1` to accept `.rds` and `.h5seurat` uploads
+(enabled by `compose.dev.yml`). The tested RDS contract is an in-memory Seurat v5
+object with one active assay, cell metadata, compatible counts/scale layers, and
+standard dimensional reductions. The adapter pins `readseurat==0.1.0`, repairs its
+known Assay5 feature-coordinate conversion defect, and reports non-active assays as
+unsupported rather than silently dropping them. On-disk layers, custom S4 extensions,
+and native RDS export remain unsupported.
 
 GO enrichment is the only current workflow that sends data outside the local
 container. An explicit Run action submits only the displayed marker gene symbols

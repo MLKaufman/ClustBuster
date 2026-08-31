@@ -105,3 +105,82 @@ def test_note_updates_preserve_annotation_provenance() -> None:
     assert updated.reference_id == "pbmc@1.0"
 
     assert store.set_notes_serialized(cluster_id, "  ").notes is None
+
+
+def test_undo_redo_tracks_labels_notes_and_resets_as_atomic_changes() -> None:
+    store = AnnotationStore.from_clusters(["a", "b"])
+    cluster_a = ClusterIdentifier.from_value("a").serialized
+    store.assign("a", "T cell")
+    store.set_notes_serialized(cluster_a, "reviewed")
+    store.assign_many(["a", "b"], "Lymphoid")
+    store.reset()
+
+    assert store.annotation_for("a") == "a"
+    assert store.annotation_for("b") == "b"
+    assert store.can_undo
+    store.undo()
+    assert store.materialize(["a", "b"]) == ["Lymphoid", "Lymphoid"]
+    assert store.get("a").notes == "reviewed"
+    store.undo()
+    assert store.annotation_for("a") == "T cell"
+    assert store.get("a").notes == "reviewed"
+    assert store.can_redo
+    store.redo()
+    assert store.materialize(["a", "b"]) == ["Lymphoid", "Lymphoid"]
+
+    store.assign("b", "B cell")
+    assert not store.can_redo
+
+
+def test_annotation_history_is_bounded() -> None:
+    store = AnnotationStore.from_clusters(["a"], history_limit=2)
+    store.assign("a", "first")
+    store.assign("a", "second")
+    store.assign("a", "third")
+    store.undo()
+    store.undo()
+    assert store.annotation_for("a") == "first"
+    with pytest.raises(ValueError, match="no annotation changes"):
+        store.undo()
+
+
+def test_undo_and_redo_fail_cleanly_without_history() -> None:
+    store = AnnotationStore.from_clusters(["a"])
+    with pytest.raises(ValueError, match="no annotation changes"):
+        store.undo()
+    with pytest.raises(ValueError, match="no annotation changes"):
+        store.redo()
+
+
+def test_table_edits_are_atomic_and_note_only_edits_keep_provenance() -> None:
+    store = AnnotationStore.from_clusters(["a", "b"])
+    store.assign(
+        "a",
+        "T cell",
+        source="pyclustifyr",
+        confidence=0.9,
+        reference_id="pbmc@1",
+    )
+    records = store.records()
+    updated = store.apply_table_edits(
+        [
+            (records[0].cluster_id.serialized, "T cell", "review subtype"),
+            (records[1].cluster_id.serialized, "B cell", "manual call"),
+        ]
+    )
+
+    assert len(updated) == 2
+    assert store.get("a").source == "pyclustifyr"
+    assert store.get("a").confidence == pytest.approx(0.9)
+    assert store.get("a").notes == "review subtype"
+    assert store.get("b").source == "manual"
+    assert store.get("b").reference_id is None
+
+    store.undo()
+    assert store.get("a").notes is None
+    assert store.annotation_for("b") == "b"
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        store.apply_table_edits(
+            [(records[0].cluster_id.serialized, " ", None)]
+        )
