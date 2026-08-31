@@ -20,11 +20,13 @@ from clustbuster.core.expression import (
     extract_expression,
     parse_gene_list,
 )
+from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.models import ExpressionSource, Workspace
 from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.feature import feature_figure
+from clustbuster.plotting.module import module_score_figure
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
 from clustbuster.services.workspaces import configure_workspace
@@ -153,6 +155,47 @@ app_ui = ui.page_fillable(
                 output_widget("dot_plot", height="580px"),
             ),
             ui.nav_panel(
+                "Module scores",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_select(
+                            "module_preset",
+                            "Gene-set preset",
+                            {
+                                "custom": "Custom gene set",
+                                **{preset.key: preset.label for preset in MODULE_PRESETS},
+                            },
+                            selected="t_cell",
+                        ),
+                        ui.input_text(
+                            "module_name", "Score label", value="T cell module"
+                        ),
+                        ui.input_action_button(
+                            "run_module", "Calculate score", class_="btn-primary"
+                        ),
+                        col_widths=(4, 5, 3),
+                    ),
+                    ui.input_text_area(
+                        "module_genes",
+                        "Genes",
+                        value="CD3D, IL7R",
+                        placeholder="Comma, space, or newline separated",
+                        rows=3,
+                    ),
+                    ui.help_text(
+                        "Scores are the mean of per-gene standardized expression "
+                        "for the selected expression source."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("module_feedback"),
+                output_widget("module_plot", height="580px"),
+                ui.card(
+                    ui.card_header("Cluster summary"),
+                    ui.output_data_frame("module_summary"),
+                ),
+            ),
+            ui.nav_panel(
                 "Export",
                 ui.output_ui("export_status"),
                 ui.card(
@@ -200,6 +243,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     feature_error = reactive.Value[str | None](None)
     dotplot_result = reactive.Value[DotPlotResult | None](None)
     dotplot_error = reactive.Value[str | None](None)
+    module_score_result = reactive.Value[ModuleScoreResult | None](None)
+    module_error = reactive.Value[str | None](None)
 
     session.on_ended(session_files.cleanup)
 
@@ -301,6 +346,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             configured.set(True)
             feature_result.set(None)
             dotplot_result.set(None)
+            module_score_result.set(None)
             revision.set(revision.get() + 1)
             ui.notification_show("Workspace configured", type="message", session=session)
         except Exception as exc:
@@ -481,6 +527,83 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(result is not None)
         assert result is not None
         return dotplot_figure(result)
+
+    @reactive.effect
+    @reactive.event(input.module_preset, ignore_init=True)
+    def apply_module_preset() -> None:
+        selected = str(input.module_preset())
+        if selected == "custom":
+            return
+        preset = next((item for item in MODULE_PRESETS if item.key == selected), None)
+        if preset is None:
+            return
+        ui.update_text_area("module_genes", value=", ".join(preset.genes), session=session)
+        ui.update_text("module_name", value=f"{preset.label} module", session=session)
+
+    @reactive.effect
+    @reactive.event(input.run_module)
+    def run_module_score() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get() and current.cluster_column is not None)
+        assert current is not None and current.cluster_column is not None
+        module_error.set(None)
+        try:
+            genes = parse_gene_list(str(input.module_genes()), limit=100)
+            result = calculate_module_score(
+                current.adata,
+                current.expression_source,
+                current.cluster_column,
+                genes,
+                name=str(input.module_name()),
+            )
+            module_score_result.set(result)
+        except Exception as exc:
+            module_score_result.set(None)
+            module_error.set(str(exc))
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render.ui
+    def module_feedback() -> ui.TagChild:
+        error = module_error.get()
+        result = module_score_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, choose a gene set, and calculate its score.")
+        unmatched = ", ".join((*result.report.missing, *result.report.ambiguous))
+        message = f"Scored {len(result.report.matched)} matched gene(s)."
+        if unmatched:
+            return ui.div(f"{message} Not included: {unmatched}", class_="alert alert-warning")
+        return ui.div(message, class_="alert alert-success")
+
+    @output
+    @render_plotly
+    def module_plot() -> Any:
+        current = workspace.get()
+        result = module_score_result.get()
+        req(current is not None and configured.get() and result is not None)
+        assert current is not None and result is not None and current.embedding_key is not None
+        coordinates = np.asarray(current.adata.obsm[current.embedding_key])
+        return module_score_figure(
+            coordinates, current.adata.obs_names.astype(str).tolist(), result
+        )
+
+    @output
+    @render.data_frame
+    def module_summary() -> pd.DataFrame:
+        result = module_score_result.get()
+        req(result is not None)
+        assert result is not None
+        summary = result.cluster_summary[["cluster", "cells", "mean_score", "median_score"]]
+        return summary.rename(
+            columns={
+                "cluster": "Cluster",
+                "cells": "Cells",
+                "mean_score": "Mean score",
+                "median_score": "Median score",
+            }
+        )
 
     @output
     @render.ui

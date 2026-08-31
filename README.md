@@ -36,6 +36,8 @@ exports before the session or container is removed.
 - Cluster-column, embedding, and expression-source configuration
 - Interactive Plotly/WebGL embedding colored by source cluster or annotation
 - Sparse-safe multi-gene feature plots and cluster-by-gene dot plots
+- Sparse-safe standardized module scores with reusable immune-cell presets,
+  embedding visualization, and per-cluster summaries
 - Autosaving cluster annotation controls
 - Cluster- and cell-level annotation CSVs packaged as a ZIP
 - Annotated H5AD export with provenance and reopen validation
