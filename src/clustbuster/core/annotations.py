@@ -169,6 +169,17 @@ class AnnotationStore:
         for cluster in cluster_values:
             self.assign(cluster, annotation, **metadata)
 
+    def set_notes_serialized(
+        self, serialized_cluster: str, notes: str | None
+    ) -> AnnotationRecord:
+        """Update notes without changing label or prediction provenance."""
+
+        existing = self.get_serialized(serialized_cluster)
+        cleaned = notes.strip() if notes and notes.strip() else None
+        updated = replace(existing, notes=cleaned, updated_at=_utc_now())
+        self._records[serialized_cluster] = updated
+        return updated
+
     def apply_previewed(
         self,
         predictions: Iterable[PreviewedAnnotation],

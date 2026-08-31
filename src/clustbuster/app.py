@@ -605,13 +605,14 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current = workspace.get()
         revision.get()
         if current is None or not configured.get():
-            frame = pd.DataFrame(columns=["Cluster", "Annotation"])
+            frame = pd.DataFrame(columns=["Cluster", "Annotation", "Notes"])
         else:
             frame = pd.DataFrame(
                 [
                     {
                         "Cluster": record.cluster_id.display,
                         "Annotation": record.annotation,
+                        "Notes": record.notes or "",
                     }
                     for record in current.annotations.records()
                 ]
@@ -642,8 +643,18 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if row_index < 0 or row_index >= len(records):
             raise ValueError("The selected annotation row is unavailable")
         existing = records[row_index]
-        if column_index != 1:
+        if column_index == 0:
             return existing.cluster_id.display
+        if column_index == 2:
+            notes = str(patch["value"]).strip()
+            current.annotations.set_notes_serialized(
+                existing.cluster_id.serialized, notes or None
+            )
+            revision.set(revision.get() + 1)
+            ui.notification_show("Notes updated", type="message", session=session)
+            return notes
+        if column_index != 1:
+            raise ValueError("The selected annotation column is unavailable")
         label = str(patch["value"]).strip()
         if not label:
             ui.notification_show(
@@ -654,6 +665,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             existing.cluster_id.serialized,
             label,
             source="manual",
+            notes=existing.notes,
         )
         revision.set(revision.get() + 1)
         if str(input.annotation_cluster()) == existing.cluster_id.serialized:
@@ -700,10 +712,12 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(current is not None and configured.get())
         assert current is not None
         try:
+            existing = current.annotations.get_serialized(str(input.annotation_cluster()))
             current.annotations.assign_serialized(
                 str(input.annotation_cluster()),
                 annotation_label,
                 source="manual",
+                notes=existing.notes,
             )
             revision.set(revision.get() + 1)
             ui.notification_show("Annotation updated", type="message", session=session)

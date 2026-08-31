@@ -83,3 +83,25 @@ def test_previewed_predictions_apply_atomically_with_provenance() -> None:
     assert applied[0].source == "pyclustifyr"
     assert applied[0].reference_id == "ref-v1"
     assert applied[0].confidence == pytest.approx(0.91)
+
+
+def test_note_updates_preserve_annotation_provenance() -> None:
+    store = AnnotationStore.from_clusters(["a"])
+    store.assign(
+        "a",
+        "T cell",
+        source="pyclustifyr",
+        confidence=0.92,
+        reference_id="pbmc@1.0",
+    )
+    cluster_id = ClusterIdentifier.from_value("a").serialized
+
+    updated = store.set_notes_serialized(cluster_id, "  Review CD4/CD8 state  ")
+
+    assert updated.notes == "Review CD4/CD8 state"
+    assert updated.annotation == "T cell"
+    assert updated.source == "pyclustifyr"
+    assert updated.confidence == pytest.approx(0.92)
+    assert updated.reference_id == "pbmc@1.0"
+
+    assert store.set_notes_serialized(cluster_id, "  ").notes is None
