@@ -53,5 +53,14 @@ packages = ["clustbuster"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["anndata", "anndata.*", "pandas", "pandas.*", "scipy", "scipy.*"]
+module = [
+  "anndata",
+  "anndata.*",
+  "pandas",
+  "pandas.*",
+  "plotly",
+  "plotly.*",
+  "scipy",
+  "scipy.*",
+]
 ignore_missing_imports = true

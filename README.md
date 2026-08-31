@@ -1,5 +1,7 @@
 # ClustBuster
 
+![ClustBuster logo](img/clustbuster-logo.png)
+
 ClustBuster is a Python-first web application for assisted annotation of
 single-cell RNA-sequencing clusters. The current implementation is an early
 Phase 0 foundation; the supported MVP input will be H5AD.
@@ -23,10 +25,15 @@ exports before the session or container is removed.
 
 - Typed, format-independent workspace and expression-source models
 - Independent cluster annotation state with type-safe cluster identifiers
+- Session-isolated H5AD upload, structural validation, and import reports
+- Cluster-column, embedding, and expression-source configuration
+- Interactive Plotly/WebGL embedding colored by source cluster or annotation
+- Autosaving cluster annotation controls
+- Cluster- and cell-level annotation CSVs packaged as a ZIP
+- Annotated H5AD export with provenance and reopen validation
 - Import and resource-provider protocols
 - Configuration from a single validated startup object
-- Minimal Shiny application shell and non-root Docker image
+- Shiny application and non-root Docker image
 
-H5AD import, analysis views, and export workflows are being built next. Seurat
-and SingleCellExperiment RDS round-tripping is not currently supported.
-
+Feature and dot plots are being built next. Seurat and SingleCellExperiment RDS
+round-tripping is not currently supported.

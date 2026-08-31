@@ -1,45 +1,388 @@
-"""Minimal Shiny shell used while the AnnData MVP is assembled."""
+"""Shiny application entry point for the AnnData-native MVP."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any, cast
 
-from shiny import App, ui
+import pandas as pd
+from shiny import App, Inputs, Outputs, Session, reactive, render, req, ui
+from shinywidgets import output_widget, render_plotly
 
 from clustbuster import __version__
+from clustbuster.config import AppConfig
+from clustbuster.core.workspace import workspace_from_import
+from clustbuster.models import ExpressionSource, Workspace
+from clustbuster.plotting.embedding import embedding_figure
+from clustbuster.services.exports import WorkspaceExportService
+from clustbuster.services.imports import ImportService, SessionFiles
+from clustbuster.services.workspaces import configure_workspace
 
-app_ui = ui.page_fillable(
-    ui.tags.style(
+config = AppConfig.from_env()
+logging.basicConfig(level=config.log_level)
+logger = logging.getLogger("clustbuster")
+
+
+def _styles() -> ui.Tag:
+    return ui.tags.style(
         """
         :root { --cb-navy: #19324a; --cb-teal: #2d8c88; --cb-bg: #f4f7f8; }
         body { background: var(--cb-bg); color: var(--cb-navy); }
-        .cb-card { max-width: 760px; margin: 8vh auto; padding: 2rem; text-align: center; }
-        .cb-mark { width: 108px; height: 108px; border-radius: 24px; }
+        .cb-header { display:flex; align-items:center; gap:.8rem; padding:.65rem 1rem; }
+        .cb-logo { width:48px; height:48px; border-radius:12px; }
+        .cb-title { margin:0; font-size:1.55rem; font-weight:700; }
+        .cb-subtitle { margin:0; color:#607180; font-size:.88rem; }
+        .cb-empty { min-height:420px; display:flex; align-items:center; justify-content:center;
+                    flex-direction:column; color:#6a7c89; text-align:center; padding:3rem; }
+        .cb-summary { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.6rem; }
+        .cb-stat { background:#fff; border:1px solid #dbe4e8; border-radius:.6rem; padding:.65rem; }
+        .cb-stat strong { display:block; font-size:1.15rem; color:var(--cb-navy); }
+        .btn-primary { background-color:var(--cb-teal); border-color:var(--cb-teal); }
         """
-    ),
-    ui.card(
+    )
+
+
+app_ui = ui.page_fillable(
+    _styles(),
+    ui.tags.header(
+        ui.tags.img(
+            src="/assets/clustbuster-logo.png", class_="cb-logo", alt="ClustBuster logo"
+        ),
         ui.tags.div(
-            ui.tags.img(
-                src="/assets/clustbuster-logo.png",
-                class_="cb-mark",
-                alt="ClustBuster logo",
+            ui.h1("ClustBuster", class_="cb-title"),
+            ui.p("Assisted single-cell cluster annotation", class_="cb-subtitle"),
+        ),
+        class_="cb-header",
+    ),
+    ui.layout_sidebar(
+        ui.sidebar(
+            ui.input_file(
+                "dataset",
+                "Upload AnnData",
+                accept=[".h5ad", "application/x-hdf5"],
+                button_label="Choose H5AD",
+                placeholder="No dataset selected",
             ),
-            ui.h1("ClustBuster"),
-            ui.p("Assisted annotation for single-cell RNA-sequencing clusters."),
-            ui.p(
-                "The application foundation is running. H5AD upload and annotation workflows "
-                "are the next implementation slice."
+            ui.output_ui("import_panel"),
+            title="Workspace",
+            width=330,
+            open="desktop",
+        ),
+        ui.navset_card_tab(
+            ui.nav_panel(
+                "Overview",
+                ui.output_ui("overview_header"),
+                ui.card(
+                    ui.card_header("Annotation controls"),
+                    ui.layout_columns(
+                        ui.input_select(
+                            "color_by",
+                            "Color embedding by",
+                            {"cluster": "Source cluster", "annotation": "Current annotation"},
+                            selected="cluster",
+                        ),
+                        ui.input_select("annotation_cluster", "Cluster", {}),
+                        ui.input_text(
+                            "annotation_label",
+                            "Annotation",
+                            placeholder="e.g. CD4 T cell",
+                        ),
+                        ui.help_text("Labels save automatically as you edit."),
+                        col_widths=(4, 3, 3, 2),
+                    ),
+                    fill=False,
+                ),
+                output_widget("embedding_plot", height="580px"),
             ),
-            ui.tags.small(f"Version {__version__}"),
-            class_="cb-card",
-        )
+            ui.nav_panel(
+                "Import report",
+                ui.output_ui("report_summary"),
+                ui.output_data_frame("report_table"),
+            ),
+            ui.nav_panel(
+                "Export",
+                ui.output_ui("export_status"),
+                ui.card(
+                    ui.card_header("Download annotations"),
+                    ui.p(
+                        "The ZIP contains separate cluster-level and cell-level CSV files."
+                    ),
+                    ui.download_button(
+                        "download_annotations",
+                        "Download annotation ZIP",
+                        class_="btn-primary",
+                    ),
+                    fill=False,
+                ),
+                ui.card(
+                    ui.card_header("Download annotated object"),
+                    ui.p(
+                        "Creates a copy with namespaced annotation columns and provenance, "
+                        "then reopens it for validation before download."
+                    ),
+                    ui.download_button(
+                        "download_h5ad", "Download annotated H5AD", class_="btn-primary"
+                    ),
+                    fill=False,
+                ),
+            ),
+            title=ui.tags.span(f"AnnData MVP · v{__version__}"),
+            full_screen=True,
+        ),
+        fillable=True,
     ),
     title="ClustBuster",
 )
 
 
-def server(input: object, output: object, session: object) -> None:
-    """No reactive behavior is exposed in the Phase 0 shell."""
+def server(input: Inputs, output: Outputs, session: Session) -> None:
+    session_files = SessionFiles.create(config.workspace_root)
+    import_service = ImportService(config.max_upload_mb)
+    export_service = WorkspaceExportService()
+    workspace = reactive.Value[Workspace | None](None)
+    configured = reactive.Value(False)
+    error_message = reactive.Value[str | None](None)
+    revision = reactive.Value(0)
+
+    session.on_ended(session_files.cleanup)
+
+    @reactive.effect
+    @reactive.event(input.dataset)
+    def import_dataset() -> None:
+        upload_value = input.dataset()
+        if not upload_value:
+            return
+        error_message.set(None)
+        configured.set(False)
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.15, message="Validating H5AD", detail="Reading object metadata")
+            try:
+                uploaded = cast(dict[str, Any], upload_value[0])
+                result = import_service.import_upload(uploaded, session_files)
+                workspace.set(workspace_from_import(result))
+                progress.set(1, message="Import complete")
+                ui.notification_show(
+                    f"Loaded {result.report.cell_count:,} cells and "
+                    f"{result.report.feature_count:,} features",
+                    type="message",
+                    session=session,
+                )
+            except Exception as exc:
+                logger.exception("H5AD import failed", extra={"error_type": type(exc).__name__})
+                workspace.set(None)
+                error_message.set(str(exc))
+                ui.notification_show(str(exc), type="error", duration=10, session=session)
+
+    @output
+    @render.ui
+    def import_panel() -> ui.TagChild:
+        error = error_message.get()
+        current = workspace.get()
+        if error:
+            return ui.div(ui.strong("Import failed"), ui.p(error), class_="alert alert-danger")
+        if current is None:
+            return ui.p("Upload an H5AD file to begin.", class_="text-muted")
+        report = current.import_report
+        cluster_choices = {name: name for name in report.candidate_cluster_columns}
+        embedding_choices = {name: name for name in report.embeddings}
+        expression_choices = {source.label: source.label for source in report.expression_sources}
+        if not cluster_choices or not embedding_choices:
+            return ui.div(
+                ui.strong("Configuration unavailable"),
+                ui.p("The object needs a compatible cluster column and 2D embedding."),
+                class_="alert alert-warning",
+            )
+        return ui.div(
+            ui.div(
+                ui.div(ui.strong(f"{report.cell_count:,}"), "Cells", class_="cb-stat"),
+                ui.div(ui.strong(f"{report.feature_count:,}"), "Features", class_="cb-stat"),
+                class_="cb-summary mb-3",
+            ),
+            ui.input_select(
+                "cluster_column",
+                "Cluster column",
+                cluster_choices,
+                selected=report.candidate_cluster_columns[0],
+            ),
+            ui.input_select(
+                "embedding_key",
+                "Embedding",
+                embedding_choices,
+                selected=report.embeddings[0],
+            ),
+            ui.input_select(
+                "expression_source",
+                "Expression source",
+                expression_choices,
+                selected=report.expression_sources[0].label,
+            ),
+            ui.input_action_button(
+                "configure", "Configure workspace", class_="btn-primary w-100"
+            ),
+        )
+
+    @reactive.effect
+    @reactive.event(input.configure)
+    def apply_configuration() -> None:
+        current = workspace.get()
+        req(current is not None)
+        assert current is not None
+        try:
+            configure_workspace(
+                current,
+                cluster_column=str(input.cluster_column()),
+                embedding_key=str(input.embedding_key()),
+                expression_source=ExpressionSource.from_label(str(input.expression_source())),
+            )
+            cluster_choices = {
+                record.cluster_id.serialized: record.cluster_id.display
+                for record in current.annotations.records()
+            }
+            ui.update_select(
+                "annotation_cluster", choices=cluster_choices, session=session
+            )
+            configured.set(True)
+            revision.set(revision.get() + 1)
+            ui.notification_show("Workspace configured", type="message", session=session)
+        except Exception as exc:
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render.ui
+    def overview_header() -> ui.TagChild:
+        current = workspace.get()
+        if current is None:
+            return ui.div(
+                ui.h3("Start with an H5AD workspace"),
+                ui.p(
+                    "Upload a dataset, review its discovered fields, and configure the workspace."
+                ),
+                class_="cb-empty",
+            )
+        if not configured.get():
+            return ui.div(
+                ui.h3("Review the detected workspace settings"),
+                ui.p("Choose the cluster column, embedding, and expression source in the sidebar."),
+                class_="cb-empty",
+            )
+        return ui.div()
+
+    @reactive.effect
+    @reactive.event(input.annotation_label, ignore_init=True)
+    def assign_annotation() -> None:
+        annotation_label = str(input.annotation_label()).strip()
+        req(annotation_label)
+        with reactive.isolate():
+            current = workspace.get()
+            req(current is not None and configured.get())
+            assert current is not None
+            try:
+                current.annotations.assign_serialized(
+                    str(input.annotation_cluster()),
+                    annotation_label,
+                    source="manual",
+                )
+                revision.set(revision.get() + 1)
+                ui.notification_show("Annotation updated", type="message", session=session)
+            except Exception as exc:
+                ui.notification_show(str(exc), type="error", duration=8, session=session)
+
+    @output
+    @render_plotly
+    def embedding_plot() -> Any:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        revision.get()
+        color_by = str(input.color_by()) if input.color_by() else "cluster"
+        return embedding_figure(current, color_by=color_by)
+
+    @output
+    @render.ui
+    def report_summary() -> ui.TagChild:
+        current = workspace.get()
+        if current is None:
+            return ui.div("No import report is available yet.", class_="cb-empty")
+        report = current.import_report
+        warning_text = (
+            ui.tags.ul(*(ui.tags.li(item) for item in report.warnings))
+            if report.warnings
+            else ui.p("No import warnings.", class_="text-success")
+        )
+        return ui.card(
+            ui.card_header(report.source_filename),
+            ui.p(
+                f"{report.cell_count:,} cells x {report.feature_count:,} features · "
+                f"{'sparse' if report.sparse else 'dense'} expression matrix"
+            ),
+            warning_text,
+            fill=False,
+        )
+
+    @output
+    @render.data_frame
+    def report_table() -> pd.DataFrame:
+        current = workspace.get()
+        req(current is not None)
+        assert current is not None
+        report = current.import_report
+        rows = [
+            ("Layers", ", ".join(report.layers) or "None"),
+            ("Embeddings", ", ".join(report.embeddings) or "None"),
+            ("Candidate clusters", ", ".join(report.candidate_cluster_columns) or "None"),
+            ("Expression sources", ", ".join(x.label for x in report.expression_sources)),
+        ]
+        return pd.DataFrame(rows, columns=["Workspace component", "Detected values"])
+
+    @output
+    @render.ui
+    def export_status() -> ui.TagChild:
+        current = workspace.get()
+        if current is None or not configured.get():
+            return ui.div(
+                ui.h3("Configure a workspace before exporting"),
+                ui.p("Exports are generated only from explicit download actions."),
+                class_="cb-empty",
+            )
+        return ui.div(
+            ui.strong("Ready to export"),
+            ui.p(
+                f"{len(current.annotations):,} cluster annotations and "
+                f"{current.adata.n_obs:,} cell annotations will be included."
+            ),
+            class_="alert alert-success",
+        )
+
+    @output
+    @render.download_button(
+        filename="clustbuster-annotations.zip",
+        media_type="application/zip",
+    )
+    def download_annotations() -> str:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.2, message="Preparing annotation tables")
+            result = export_service.export_annotation_zip(current, session_files.exports)
+            progress.set(1, message="Annotation export ready")
+        return str(result.artifacts[0].path)
+
+    @output
+    @render.download_button(
+        filename="clustbuster-annotated.h5ad",
+        media_type="application/x-hdf5",
+    )
+    def download_h5ad() -> str:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.1, message="Creating annotated H5AD copy")
+            result = export_service.export_h5ad(current, session_files.exports)
+            progress.set(1, message="Annotated H5AD validated")
+        return str(result.artifacts[0].path)
 
 
 app = App(app_ui, server, static_assets={"/assets": Path(__file__).parent / "www"})

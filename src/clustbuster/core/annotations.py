@@ -100,6 +100,12 @@ class AnnotationStore:
         except KeyError as exc:
             raise KeyError(f"Unknown cluster identifier: {cluster!r}") from exc
 
+    def get_serialized(self, serialized_cluster: str) -> AnnotationRecord:
+        try:
+            return self._records[serialized_cluster]
+        except KeyError as exc:
+            raise KeyError(f"Unknown serialized cluster identifier: {serialized_cluster}") from exc
+
     def assign(
         self,
         cluster: Any,
@@ -123,6 +129,24 @@ class AnnotationStore:
             updated_at=_utc_now(),
         )
         self._records[existing.cluster_id.serialized] = updated
+        return updated
+
+    def assign_serialized(
+        self, serialized_cluster: str, annotation: str, **metadata: Any
+    ) -> AnnotationRecord:
+        existing = self.get_serialized(serialized_cluster)
+        if not annotation.strip():
+            raise ValueError("Annotation must not be empty")
+        updated = replace(
+            existing,
+            annotation=annotation.strip(),
+            source=str(metadata.get("source", "manual")),
+            notes=metadata.get("notes"),
+            confidence=metadata.get("confidence"),
+            reference_id=metadata.get("reference_id"),
+            updated_at=_utc_now(),
+        )
+        self._records[serialized_cluster] = updated
         return updated
 
     def assign_many(self, clusters: Iterable[Any], annotation: str, **metadata: Any) -> None:

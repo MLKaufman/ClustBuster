@@ -49,6 +49,17 @@ class ExpressionSource:
     def named_layer(cls, name: str) -> ExpressionSource:
         return cls(ExpressionKind.LAYER, name)
 
+    @classmethod
+    def from_label(cls, label: str) -> ExpressionSource:
+        if label == ExpressionKind.X.value:
+            return cls.x()
+        if label == ExpressionKind.RAW.value:
+            return cls.raw()
+        prefix = "layer:"
+        if label.startswith(prefix) and label[len(prefix) :]:
+            return cls.named_layer(label[len(prefix) :])
+        raise ValueError(f"Unknown expression source: {label}")
+
     @property
     def label(self) -> str:
         return f"layer:{self.layer}" if self.layer else self.kind.value
