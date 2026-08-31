@@ -71,6 +71,9 @@ def _styles() -> ui.Tag:
         .cb-summary { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.6rem; }
         .cb-stat { background:#fff; border:1px solid #dbe4e8; border-radius:.6rem; padding:.65rem; }
         .cb-stat strong { display:block; font-size:1.15rem; color:var(--cb-navy); }
+        .cb-annotation-sidebar { border-left-color:#cbd8dd; }
+        .cb-annotation-sidebar .sidebar-content { min-width:310px; }
+        .cb-annotation-sidebar .shiny-data-grid { font-size:.88rem; }
         .btn-primary { background-color:var(--cb-teal); border-color:var(--cb-teal); }
         """
     )
@@ -107,22 +110,12 @@ app_ui = ui.page_fillable(
                 "Overview",
                 ui.output_ui("overview_header"),
                 ui.card(
-                    ui.card_header("Annotation controls"),
-                    ui.layout_columns(
-                        ui.input_select(
-                            "color_by",
-                            "Color embedding by",
-                            {"cluster": "Source cluster", "annotation": "Current annotation"},
-                            selected="cluster",
-                        ),
-                        ui.input_select("annotation_cluster", "Cluster", {}),
-                        ui.input_text(
-                            "annotation_label",
-                            "Annotation",
-                            placeholder="e.g. CD4 T cell",
-                        ),
-                        ui.help_text("Labels save automatically as you edit."),
-                        col_widths=(4, 3, 3, 2),
+                    ui.card_header("Embedding controls"),
+                    ui.input_select(
+                        "color_by",
+                        "Color embedding by",
+                        {"cluster": "Source cluster", "annotation": "Current annotation"},
+                        selected="cluster",
                     ),
                     fill=False,
                 ),
@@ -377,6 +370,29 @@ app_ui = ui.page_fillable(
                     fill=False,
                 ),
             ),
+            sidebar=ui.sidebar(
+                ui.output_ui("annotation_sidebar_status"),
+                ui.input_select("annotation_cluster", "Selected cluster", {}),
+                ui.input_text(
+                    "annotation_label",
+                    "Annotation",
+                    placeholder="e.g. CD4 T cell",
+                ),
+                ui.input_action_button(
+                    "save_annotation", "Save annotation", class_="btn-primary w-100"
+                ),
+                ui.help_text(
+                    "Double-click an Annotation cell below to edit it directly. "
+                    "Click a row to select that cluster."
+                ),
+                ui.output_data_frame("annotation_table"),
+                title="Annotations",
+                position="right",
+                open="always",
+                width=390,
+                class_="cb-annotation-sidebar",
+                fillable=True,
+            ),
             title=ui.tags.span(f"AnnData MVP · v{__version__}"),
             full_screen=True,
         ),
@@ -513,8 +529,17 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 record.cluster_id.serialized: record.cluster_id.display
                 for record in current.annotations.records()
             }
+            selected_cluster = next(iter(cluster_choices))
             ui.update_select(
-                "annotation_cluster", choices=cluster_choices, session=session
+                "annotation_cluster",
+                choices=cluster_choices,
+                selected=selected_cluster,
+                session=session,
+            )
+            ui.update_text(
+                "annotation_label",
+                value=current.annotations.get_serialized(selected_cluster).annotation,
+                session=session,
             )
             ui.update_select("marker_cluster", choices=cluster_choices, session=session)
             configured.set(True)
@@ -551,25 +576,139 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             )
         return ui.div()
 
+    @output
+    @render.ui
+    def annotation_sidebar_status() -> ui.TagChild:
+        current = workspace.get()
+        if current is None:
+            return ui.div(
+                ui.strong("No workspace"),
+                ui.p("Upload and configure an H5AD file to edit annotations."),
+                class_="alert alert-light",
+            )
+        if not configured.get():
+            return ui.div(
+                ui.strong("Workspace not configured"),
+                ui.p("Choose the source cluster column in the left sidebar."),
+                class_="alert alert-warning",
+            )
+        revision.get()
+        return ui.div(
+            ui.strong(f"{len(current.annotations):,} source clusters"),
+            ui.p("Edits apply across every cell in the selected cluster."),
+            class_="alert alert-info",
+        )
+
+    @output
+    @render.data_frame
+    def annotation_table() -> Any:
+        current = workspace.get()
+        revision.get()
+        if current is None or not configured.get():
+            frame = pd.DataFrame(columns=["Cluster", "Annotation"])
+        else:
+            frame = pd.DataFrame(
+                [
+                    {
+                        "Cluster": record.cluster_id.display,
+                        "Annotation": record.annotation,
+                    }
+                    for record in current.annotations.records()
+                ]
+            )
+        return render.DataGrid(
+            frame,
+            editable=True,
+            selection_mode="row",
+            summary=False,
+            width="100%",
+            height="calc(100vh - 405px)",
+            styles=[
+                {
+                    "cols": [0],
+                    "style": {"background-color": "#eef3f5", "font-weight": "600"},
+                }
+            ],
+        )
+
+    @annotation_table.set_patch_fn
+    def _patch_annotation(*, patch: render.CellPatch) -> render.CellValue:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        records = current.annotations.records()
+        row_index = int(patch["row_index"])
+        column_index = int(patch["column_index"])
+        if row_index < 0 or row_index >= len(records):
+            raise ValueError("The selected annotation row is unavailable")
+        existing = records[row_index]
+        if column_index != 1:
+            return existing.cluster_id.display
+        label = str(patch["value"]).strip()
+        if not label:
+            ui.notification_show(
+                "Annotation must not be empty", type="error", duration=8, session=session
+            )
+            return existing.annotation
+        current.annotations.assign_serialized(
+            existing.cluster_id.serialized,
+            label,
+            source="manual",
+        )
+        revision.set(revision.get() + 1)
+        if str(input.annotation_cluster()) == existing.cluster_id.serialized:
+            ui.update_text("annotation_label", value=label, session=session)
+        ui.notification_show("Annotation updated", type="message", session=session)
+        return label
+
     @reactive.effect
-    @reactive.event(input.annotation_label, ignore_init=True)
+    def select_annotation_table_row() -> None:
+        current = workspace.get()
+        if current is None or not configured.get():
+            return
+        selected_rows = annotation_table.cell_selection().get("rows", ())
+        if not selected_rows:
+            return
+        row_index = int(selected_rows[0])
+        records = current.annotations.records()
+        if row_index >= len(records):
+            return
+        record = records[row_index]
+        ui.update_select(
+            "annotation_cluster", selected=record.cluster_id.serialized, session=session
+        )
+        ui.update_text("annotation_label", value=record.annotation, session=session)
+
+    @reactive.effect
+    @reactive.event(input.annotation_cluster, ignore_init=True)
+    def sync_annotation_editor() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        try:
+            record = current.annotations.get_serialized(str(input.annotation_cluster()))
+        except KeyError:
+            return
+        ui.update_text("annotation_label", value=record.annotation, session=session)
+
+    @reactive.effect
+    @reactive.event(input.save_annotation)
     def assign_annotation() -> None:
         annotation_label = str(input.annotation_label()).strip()
         req(annotation_label)
-        with reactive.isolate():
-            current = workspace.get()
-            req(current is not None and configured.get())
-            assert current is not None
-            try:
-                current.annotations.assign_serialized(
-                    str(input.annotation_cluster()),
-                    annotation_label,
-                    source="manual",
-                )
-                revision.set(revision.get() + 1)
-                ui.notification_show("Annotation updated", type="message", session=session)
-            except Exception as exc:
-                ui.notification_show(str(exc), type="error", duration=8, session=session)
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        try:
+            current.annotations.assign_serialized(
+                str(input.annotation_cluster()),
+                annotation_label,
+                source="manual",
+            )
+            revision.set(revision.get() + 1)
+            ui.notification_show("Annotation updated", type="message", session=session)
+        except Exception as exc:
+            ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @output
     @render_plotly
@@ -1051,6 +1190,17 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             )
             reference_annotation_applied.set(True)
             revision.set(revision.get() + 1)
+            selected_cluster = str(input.annotation_cluster())
+            try:
+                selected_record = current.annotations.get_serialized(selected_cluster)
+            except KeyError:
+                selected_record = None
+            if selected_record is not None:
+                ui.update_text(
+                    "annotation_label",
+                    value=selected_record.annotation,
+                    session=session,
+                )
             ui.notification_show(
                 f"Applied {len(result.predictions)} reference predictions",
                 type="message",
