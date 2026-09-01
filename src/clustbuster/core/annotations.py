@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -12,6 +13,19 @@ from typing import Any
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _natural_cluster_key(identifier: ClusterIdentifier) -> tuple[Any, ...]:
+    """Sort cluster displays naturally while keeping typed IDs deterministic."""
+
+    if identifier.type_name == "missing":
+        return (1, (), identifier.type_name, identifier.value)
+    parts = tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", identifier.display)
+        if part
+    )
+    return (0, parts, identifier.type_name, identifier.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +139,12 @@ class AnnotationStore:
         return len(self._records)
 
     def records(self) -> tuple[AnnotationRecord, ...]:
-        return tuple(self._records.values())
+        return tuple(
+            sorted(
+                self._records.values(),
+                key=lambda record: _natural_cluster_key(record.cluster_id),
+            )
+        )
 
     def get(self, cluster: Any) -> AnnotationRecord:
         key = ClusterIdentifier.from_value(cluster).serialized

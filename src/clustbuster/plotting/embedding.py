@@ -15,11 +15,16 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
         raise ValueError("The workspace must have a cluster column and embedding")
     coordinates = np.asarray(workspace.adata.obsm[workspace.embedding_key])
     clusters = workspace.adata.obs[workspace.cluster_column].tolist()
+    records = [workspace.annotations.get(cluster) for cluster in clusters]
+    source_labels = [record.cluster_id.display for record in records]
+    current_annotations = [record.annotation for record in records]
     if color_by == "cluster":
-        labels = ["<missing>" if value is None else str(value) for value in clusters]
+        labels = source_labels
+        overlay_labels = source_labels
         legend_title = workspace.cluster_column
     elif color_by == "annotation":
-        labels = workspace.annotations.materialize(clusters)
+        labels = current_annotations
+        overlay_labels = current_annotations
         legend_title = "Annotation"
     else:
         raise ValueError(f"Unsupported embedding color mode: {color_by}")
@@ -29,12 +34,11 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
         grouped_indices[label].append(index)
 
     cluster_indices: dict[str, list[int]] = defaultdict(list)
-    cluster_annotations: dict[str, str] = {}
-    current_annotations = workspace.annotations.materialize(clusters)
-    for index, cluster in enumerate(clusters):
-        cluster_label = "<missing>" if cluster is None else str(cluster)
-        cluster_indices[cluster_label].append(index)
-        cluster_annotations[cluster_label] = current_annotations[index]
+    cluster_overlay_labels: dict[str, str] = {}
+    for index, record in enumerate(records):
+        cluster_key = record.cluster_id.serialized
+        cluster_indices[cluster_key].append(index)
+        cluster_overlay_labels[cluster_key] = overlay_labels[index]
 
     figure = go.Figure()
     cell_ids = workspace.adata.obs_names.astype(str).tolist()
@@ -50,13 +54,13 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
                 marker={"size": 6, "opacity": 0.78},
             )
         )
-    for cluster, indices in cluster_indices.items():
+    for cluster_key, indices in cluster_indices.items():
         figure.add_annotation(
             x=float(np.median(coordinates[indices, 0])),
             y=float(np.median(coordinates[indices, 1])),
-            text=cluster_annotations[cluster],
+            text=cluster_overlay_labels[cluster_key],
             showarrow=False,
-            font={"size": 13, "color": "#19324a"},
+            font={"size": 15, "weight": 700, "color": "#19324a"},
             bgcolor="rgba(255, 255, 255, 0.82)",
             bordercolor="rgba(25, 50, 74, 0.35)",
             borderpad=3,

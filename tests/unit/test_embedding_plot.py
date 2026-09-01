@@ -58,6 +58,13 @@ def test_embedding_uses_webgl_and_stable_cell_customdata() -> None:
 def test_embedding_can_color_by_current_annotations() -> None:
     workspace = _workspace()
     workspace.annotations.assign("a", "T cell")
+
+    source_figure = embedding_figure(workspace, color_by="cluster")
+    assert {trace.name for trace in source_figure.data} == {"a", "b"}
+    assert [item.text for item in source_figure.layout.annotations] == ["a", "b"]
+
     figure = embedding_figure(workspace, color_by="annotation")
     assert {trace.name for trace in figure.data} == {"T cell", "b"}
     assert [item.text for item in figure.layout.annotations] == ["T cell", "b"]
+    assert all(item.font.size == 15 for item in figure.layout.annotations)
+    assert all(item.font.weight == 700 for item in figure.layout.annotations)

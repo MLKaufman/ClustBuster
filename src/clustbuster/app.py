@@ -89,8 +89,14 @@ def _styles() -> ui.Tag:
         .cb-annotation-table td:first-child { font-weight:600; width:18%; }
         .cb-annotation-table .form-group { margin:0; }
         .cb-annotation-table input { font-size:.84rem; padding:.3rem .45rem; min-width:0; }
-        .cb-annotation-actions { display:flex; gap:.5rem; flex:0 0 auto; }
-        .cb-annotation-actions .btn { flex:1 1 0; }
+        .cb-annotation-actions { display:flex; justify-content:flex-end; gap:.4rem;
+                                 flex:0 0 auto; }
+        .cb-icon-button { width:2.25rem; height:2.25rem; padding:.25rem;
+                          display:inline-flex; align-items:center; justify-content:center;
+                          font-size:1rem; line-height:1; }
+        .cb-cluster-summary { background:#fff; border:1px solid #dbe4e8;
+                              border-radius:.5rem; padding:.75rem; }
+        .cb-cluster-summary p { margin-bottom:0; }
         #dataset_progress.shiny-file-input-progress { height:1rem; min-height:1rem;
                                                        margin-top:.65rem; margin-bottom:1rem;
                                                        border-radius:.5rem; overflow:hidden; }
@@ -136,6 +142,7 @@ app_ui = ui.page_fillable(
                 {"cluster": "Source cluster", "annotation": "Current annotation"},
                 selected="cluster",
             ),
+            ui.output_ui("initialize_workspace_control"),
             title="Workspace",
             width=330,
             open="desktop",
@@ -202,7 +209,7 @@ app_ui = ui.page_fillable(
                 output_widget("dot_plot", height="580px"),
             ),
             ui.nav_panel(
-                "Resources",
+                "MarkerCodex",
                 ui.output_ui("provider_status"),
                 ui.card(
                     ui.card_header("Marker catalog"),
@@ -242,7 +249,7 @@ app_ui = ui.page_fillable(
                 ),
             ),
             ui.nav_panel(
-                "Reference annotation",
+                "Refmats",
                 ui.card(
                     ui.card_header("Reference-based cluster annotation"),
                     ui.output_ui("reference_annotation_controls"),
@@ -404,20 +411,29 @@ app_ui = ui.page_fillable(
                 ),
             ),
             sidebar=ui.sidebar(
-                ui.output_ui("annotation_sidebar_status"),
                 ui.div(
-                    ui.input_action_button("undo_annotation", "Undo"),
-                    ui.input_action_button("redo_annotation", "Redo"),
+                    ui.download_button(
+                        "download_annotation_csv",
+                        "💾",
+                        title="Download annotations as CSV",
+                        aria_label="Download annotations as CSV",
+                        class_="btn btn-outline-primary btn-sm cb-icon-button",
+                    ),
+                    ui.input_action_button(
+                        "request_reset_annotations",
+                        "🗑️",
+                        title="Reset all annotations",
+                        aria_label="Reset all annotations",
+                        class_="btn btn-outline-danger btn-sm cb-icon-button",
+                    ),
                     class_="cb-annotation-actions",
-                ),
-                ui.input_action_button(
-                    "reset_all_annotations", "Reset all annotations", class_="w-100"
                 ),
                 ui.help_text(
                     "Edit labels or notes directly in the table. Changes save automatically "
-                    "when you leave a field. Up to 50 changes can be undone."
+                    "when you leave a field."
                 ),
                 ui.output_ui("annotation_table"),
+                ui.output_ui("annotation_sidebar_status"),
                 title="Annotations",
                 position="right",
                 open="always",
@@ -542,9 +558,19 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 expression_choices,
                 selected=report.expression_sources[0].label,
             ),
-            ui.input_action_button(
-                "configure", "Configure workspace", class_="btn-primary w-100"
-            ),
+        )
+
+    @output
+    @render.ui
+    def initialize_workspace_control() -> ui.TagChild:
+        current = workspace.get()
+        if current is None:
+            return ui.div()
+        report = current.import_report
+        if not report.candidate_cluster_columns or not report.embeddings:
+            return ui.div()
+        return ui.input_action_button(
+            "configure", "Initialize Workspace", class_="btn-primary w-100 mt-3"
         )
 
     @reactive.effect
@@ -619,7 +645,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return ui.div(
             ui.strong(f"{len(current.annotations):,} source clusters"),
             ui.p("Table edits save automatically and apply to every cell in the cluster."),
-            class_="alert alert-info",
+            class_="cb-cluster-summary",
         )
 
     @output
@@ -695,7 +721,32 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @reactive.effect
-    @reactive.event(input.reset_all_annotations)
+    @reactive.event(input.request_reset_annotations)
+    def request_reset_annotations() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        ui.modal_show(
+            ui.modal(
+                ui.p(
+                    "This will replace every current annotation with its original source "
+                    "cluster label and clear all notes."
+                ),
+                title="Reset all annotations?",
+                footer=ui.TagList(
+                    ui.modal_button("Cancel"),
+                    ui.input_action_button(
+                        "confirm_reset_annotations",
+                        "Reset annotations",
+                        class_="btn-danger",
+                    ),
+                ),
+                easy_close=True,
+            ),
+            session=session,
+        )
+
+    @reactive.effect
+    @reactive.event(input.confirm_reset_annotations)
     def reset_all_annotations() -> None:
         current = workspace.get()
         req(current is not None and configured.get())
@@ -703,35 +754,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current.annotations.reset()
         revision.set(revision.get() + 1)
         _refresh_annotation_table(current)
+        ui.modal_remove(session=session)
         ui.notification_show("All annotations reset", type="message", session=session)
-
-    @reactive.effect
-    @reactive.event(input.undo_annotation)
-    def undo_annotation() -> None:
-        current = workspace.get()
-        req(current is not None and configured.get())
-        assert current is not None
-        try:
-            current.annotations.undo()
-            revision.set(revision.get() + 1)
-            _refresh_annotation_table(current)
-            ui.notification_show("Annotation change undone", type="message", session=session)
-        except ValueError as exc:
-            ui.notification_show(str(exc), type="warning", duration=5, session=session)
-
-    @reactive.effect
-    @reactive.event(input.redo_annotation)
-    def redo_annotation() -> None:
-        current = workspace.get()
-        req(current is not None and configured.get())
-        assert current is not None
-        try:
-            current.annotations.redo()
-            revision.set(revision.get() + 1)
-            _refresh_annotation_table(current)
-            ui.notification_show("Annotation change redone", type="message", session=session)
-        except ValueError as exc:
-            ui.notification_show(str(exc), type="warning", duration=5, session=session)
 
     @output
     @render_plotly
@@ -1476,6 +1500,20 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ),
             class_="alert alert-success",
         )
+
+    @output
+    @render.download_button(
+        filename="clustbuster-cluster-annotations.csv",
+        media_type="text/csv",
+    )
+    def download_annotation_csv() -> str:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        result = export_service.export_cluster_annotations_csv(
+            current, session_files.exports
+        )
+        return str(result.artifacts[0].path)
 
     @output
     @render.download_button(

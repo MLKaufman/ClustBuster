@@ -32,4 +32,22 @@ def test_annotation_sidebar_uses_only_the_autosaving_table_editor() -> None:
     assert 'id="save_annotation"' not in html
     assert 'id="save_annotation_table"' not in html
     assert 'id="reset_selected_annotation"' not in html
+    assert 'id="undo_annotation"' not in html
+    assert 'id="redo_annotation"' not in html
+    assert 'id="request_reset_annotations"' in html
+    assert 'id="download_annotation_csv"' in html
     assert "Changes save automatically when you leave a field" in html
+    assert html.index('id="download_annotation_csv"') < html.index(
+        "Changes save automatically when you leave a field"
+    )
+    assert ".cb-cluster-summary { background:#fff" in html
+
+
+def test_workspace_and_tab_labels_match_product_language() -> None:
+    html = _rendered_html()
+
+    assert 'id="initialize_workspace_control"' in html
+    assert 'data-value="MarkerCodex"' in html
+    assert 'data-value="Refmats"' in html
+    assert 'data-value="Resources"' not in html
+    assert 'data-value="Reference annotation"' not in html

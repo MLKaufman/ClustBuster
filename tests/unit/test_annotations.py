@@ -23,6 +23,18 @@ def test_assignment_and_materialization_do_not_collapse_ids() -> None:
     assert store.get(1).source == "manual"
 
 
+def test_records_use_natural_cluster_order_for_single_and_double_digits() -> None:
+    store = AnnotationStore.from_clusters(["10", "2", "1", "11", "3"])
+
+    assert [record.cluster_id.display for record in store.records()] == [
+        "1",
+        "2",
+        "3",
+        "10",
+        "11",
+    ]
+
+
 def test_empty_annotations_and_unknown_clusters_fail() -> None:
     store = AnnotationStore.from_clusters(["a"])
     with pytest.raises(ValueError, match="must not be empty"):

@@ -78,6 +78,21 @@ def test_annotation_zip_round_trips_unicode_quotes_and_typed_ids(tmp_path: Path)
     assert len(set(cells["cluster_id"])) == 2
 
 
+def test_cluster_annotation_csv_exports_current_table(tmp_path: Path) -> None:
+    workspace = _workspace()
+    workspace.annotations.assign("a", "T cell", notes="reviewed")
+
+    result = WorkspaceExportService().export_cluster_annotations_csv(workspace, tmp_path)
+    artifact = result.artifacts[0]
+    exported = pd.read_csv(artifact.path)
+
+    assert artifact.kind == "cluster_annotation_csv"
+    assert artifact.media_type == "text/csv"
+    assert exported["cluster_display"].tolist() == ["a", "b"]
+    assert exported["annotation"].tolist() == ["T cell", "b"]
+    assert exported["notes"].iloc[0] == "reviewed"
+
+
 def test_h5ad_export_preserves_source_and_validates_round_trip(tmp_path: Path) -> None:
     workspace = _workspace()
     source_path = tmp_path / "source.h5ad"
@@ -106,4 +121,3 @@ def test_h5ad_export_refuses_namespace_collisions(tmp_path: Path, collision: str
         workspace.adata.obs[collision] = "existing"
     with pytest.raises(ExportCollisionError, match="would be overwritten"):
         WorkspaceExportService().export_h5ad(workspace, tmp_path)
-

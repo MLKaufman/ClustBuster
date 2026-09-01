@@ -97,6 +97,24 @@ class WorkspaceExportService:
         )
         return ExportResult((artifact,))
 
+    def export_cluster_annotations_csv(
+        self, workspace: Workspace, destination: Path
+    ) -> ExportResult:
+        """Export the current cluster-level annotation table as a standalone CSV."""
+
+        destination.mkdir(parents=True, exist_ok=True)
+        cluster_table, _ = self.annotation_tables(workspace)
+        stem = _safe_stem(workspace.source_filename)
+        artifact_path = destination / f"{uuid4().hex}-{stem}-cluster-annotations.csv"
+        cluster_table.to_csv(artifact_path, index=False, lineterminator="\n")
+        artifact = ExportArtifact(
+            kind="cluster_annotation_csv",
+            path=artifact_path,
+            checksum=_checksum(artifact_path),
+            media_type="text/csv",
+        )
+        return ExportResult((artifact,))
+
     def export_h5ad(self, workspace: Workspace, destination: Path) -> ExportResult:
         if workspace.cluster_column is None:
             raise ExportError("Configure a cluster column before exporting")
@@ -160,4 +178,3 @@ class WorkspaceExportService:
             raise ExportError("Annotated H5AD failed annotation validation")
         if PROVENANCE_KEY not in reopened.uns:
             raise ExportError("Annotated H5AD is missing export provenance")
-
