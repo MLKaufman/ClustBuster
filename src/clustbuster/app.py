@@ -59,6 +59,9 @@ from clustbuster.services.workspaces import configure_workspace
 config = AppConfig.from_env()
 logging.basicConfig(level=config.log_level)
 logger = logging.getLogger("clustbuster")
+_DEFAULT_GENE_PANEL = (
+    "PTPRC, CD3E, CD4, CD8A, MS4A1, CD14, NKG7, EPCAM, PECAM1, COL1A1, ACTA2, MKI67"
+)
 _ORA_LIBRARIES = {
     DEFAULT_LIBRARY: "GO Biological Process 2025",
     "GO_Molecular_Function_2025": "GO Molecular Function 2025",
@@ -131,10 +134,10 @@ def _styles() -> ui.Tag:
         #reference_correlation_container { display:block; width:100%;
                                            flex:0 0 auto !important; }
         .cb-reference-heatmap-frame { display:block; width:100%; flex:none !important; }
-        #dataset_progress.shiny-file-input-progress { height:1rem; min-height:1rem;
-                                                       margin-top:.65rem; margin-bottom:1rem;
+        #dataset_progress.shiny-file-input-progress { height:1.5rem; min-height:1.5rem;
+                                                       margin-top:.65rem; margin-bottom:1.25rem;
                                                        border-radius:.5rem; overflow:hidden; }
-        #dataset_progress .progress-bar { min-height:1rem; }
+        #dataset_progress .progress-bar { min-height:1.5rem; line-height:1.5rem; }
         .cb-overview-stack { display:flex; flex-direction:column; gap:0; }
         .cb-overview-plot { width:100%; height:1160px; min-height:1160px; margin:0; }
         #embedding_plot { width:100% !important; height:1160px !important;
@@ -145,8 +148,39 @@ def _styles() -> ui.Tag:
     )
 
 
+def _plot_refresh_script() -> ui.Tag:
+    return ui.tags.script(
+        """
+        (function () {
+          var refreshTimer = null;
+          function refreshPlotlyOutputs() {
+            if (document.visibilityState !== "visible") return;
+            window.clearTimeout(refreshTimer);
+            refreshTimer = window.setTimeout(function () {
+              if (window.Shiny && typeof window.Shiny.setInputValue === "function") {
+                window.Shiny.setInputValue("plot_refresh", Date.now(), {priority: "event"});
+              }
+              if (window.Plotly) {
+                document.querySelectorAll(".js-plotly-plot").forEach(function (plot) {
+                  window.Plotly.Plots.resize(plot);
+                });
+              }
+            }, 100);
+          }
+          document.addEventListener("visibilitychange", refreshPlotlyOutputs);
+          window.addEventListener("pageshow", refreshPlotlyOutputs);
+          document.addEventListener("shiny:connected", refreshPlotlyOutputs);
+          if (window.jQuery) {
+            window.jQuery(document).on("shiny:connected", refreshPlotlyOutputs);
+          }
+        })();
+        """
+    )
+
+
 app_ui = ui.page_fillable(
     _styles(),
+    _plot_refresh_script(),
     ui.layout_sidebar(
         ui.sidebar(
             ui.div(
@@ -177,7 +211,6 @@ app_ui = ui.page_fillable(
                 selected="cluster",
             ),
             ui.output_ui("initialize_workspace_control"),
-            title="Workspace",
             width=330,
             open="desktop",
         ),
@@ -206,7 +239,7 @@ app_ui = ui.page_fillable(
                     ui.input_text_area(
                         "feature_genes",
                         "Genes",
-                        value="CD3D, LYZ",
+                        value=_DEFAULT_GENE_PANEL,
                         placeholder="Comma, space, or newline separated",
                         rows=2,
                     ),
@@ -227,7 +260,7 @@ app_ui = ui.page_fillable(
                     ui.input_text_area(
                         "dot_genes",
                         "Gene panel",
-                        value="CD3D, LYZ, MS4A1, NKG7",
+                        value=_DEFAULT_GENE_PANEL,
                         placeholder="Comma, space, or newline separated",
                         rows=2,
                     ),
@@ -603,6 +636,37 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     session.on_ended(session_files.cleanup)
 
+    def configure_current_workspace(
+        current: Workspace,
+        *,
+        cluster_column: str,
+        embedding_key: str,
+        expression_source: ExpressionSource,
+    ) -> None:
+        configure_workspace(
+            current,
+            cluster_column=cluster_column,
+            embedding_key=embedding_key,
+            expression_source=expression_source,
+        )
+        cluster_choices = {
+            record.cluster_id.serialized: record.cluster_id.display
+            for record in current.annotations.records()
+        }
+        ui.update_select("marker_cluster", choices=cluster_choices, session=session)
+        configured.set(True)
+        feature_result.set(None)
+        dotplot_result.set(None)
+        module_score_result.set(None)
+        marker_result.set(None)
+        enrichment_result.set(None)
+        ora_result.set(None)
+        ora_error.set(None)
+        reference_annotation_result.set(None)
+        reference_annotation_error.set(None)
+        reference_annotation_applied.set(False)
+        revision.set(revision.get() + 1)
+
     @reactive.effect
     @reactive.event(input.dataset)
     def import_dataset() -> None:
@@ -616,7 +680,16 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             try:
                 uploaded = cast(dict[str, Any], upload_value[0])
                 result = import_service.import_upload(uploaded, session_files)
-                workspace.set(workspace_from_import(result))
+                current = workspace_from_import(result)
+                report = current.import_report
+                if report.candidate_cluster_columns and report.embeddings:
+                    configure_current_workspace(
+                        current,
+                        cluster_column=report.candidate_cluster_columns[0],
+                        embedding_key=report.embeddings[0],
+                        expression_source=report.expression_sources[0],
+                    )
+                workspace.set(current)
                 progress.set(1, message="Import complete")
                 ui.notification_show(
                     f"Loaded {result.report.cell_count:,} cells and "
@@ -685,7 +758,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if not report.candidate_cluster_columns or not report.embeddings:
             return ui.div()
         return ui.input_action_button(
-            "configure", "Initialize Workspace", class_="btn-primary w-100 mt-3"
+            "configure", "Reinitialize Workspace", class_="btn-primary w-100 mt-3"
         )
 
     @reactive.effect
@@ -695,30 +768,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(current is not None)
         assert current is not None
         try:
-            configure_workspace(
+            configure_current_workspace(
                 current,
                 cluster_column=str(input.cluster_column()),
                 embedding_key=str(input.embedding_key()),
                 expression_source=ExpressionSource.from_label(str(input.expression_source())),
             )
-            cluster_choices = {
-                record.cluster_id.serialized: record.cluster_id.display
-                for record in current.annotations.records()
-            }
-            ui.update_select("marker_cluster", choices=cluster_choices, session=session)
-            configured.set(True)
-            feature_result.set(None)
-            dotplot_result.set(None)
-            module_score_result.set(None)
-            marker_result.set(None)
-            enrichment_result.set(None)
-            ora_result.set(None)
-            ora_error.set(None)
-            reference_annotation_result.set(None)
-            reference_annotation_error.set(None)
-            reference_annotation_applied.set(False)
-            revision.set(revision.get() + 1)
-            ui.notification_show("Workspace configured", type="message", session=session)
+            ui.notification_show("Workspace reinitialized", type="message", session=session)
         except Exception as exc:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
 
@@ -873,6 +929,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def embedding_plot() -> Any:
+        input.plot_refresh()
         current = workspace.get()
         req(current is not None and configured.get())
         assert current is not None
@@ -948,7 +1005,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             return
 
         @output(id=f"feature_gene_plot_{index}")
-        @render_plotly
+        @render.plot(alt="Feature expression plot")
         def feature_gene_plot() -> Any:
             current = workspace.get()
             result = feature_result.get()
@@ -968,7 +1025,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 annotations = feature_annotation_overlays(current, coordinates)
             return feature_gene_figure(
                 coordinates,
-                current.adata.obs_names.astype(str).tolist(),
                 gene,
                 result.values[gene].to_numpy(),
                 annotations,
@@ -1018,7 +1074,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             *(
                 ui.card(
                     ui.card_header(str(gene)),
-                    output_widget(f"feature_gene_plot_{index}", width="100%", height="520px"),
+                    ui.output_plot(
+                        f"feature_gene_plot_{index}", width="100%", height="520px"
+                    ),
                     fill=False,
                 )
                 for index, gene in enumerate(result.values.columns)
@@ -1066,6 +1124,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def dot_plot() -> Any:
+        input.plot_refresh()
         result = dotplot_result.get()
         req(result is not None)
         assert result is not None
@@ -1396,6 +1455,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def reference_correlation_plot() -> Any:
+        input.plot_refresh()
         result = reference_annotation_result.get()
         req(result is not None)
         assert result is not None
@@ -1496,6 +1556,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def module_plot() -> Any:
+        input.plot_refresh()
         current = workspace.get()
         result = module_score_result.get()
         req(current is not None and configured.get() and result is not None)
@@ -1508,6 +1569,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def module_violin_plot() -> Any:
+        input.plot_refresh()
         result = module_score_result.get()
         req(result is not None)
         assert result is not None
@@ -1613,6 +1675,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def marker_heatmap() -> Any:
+        input.plot_refresh()
         result = marker_result.get()
         req(result is not None)
         assert result is not None
@@ -1661,6 +1724,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def marker_enrichment_plot() -> Any:
+        input.plot_refresh()
         result = enrichment_result.get()
         req(result is not None)
         assert result is not None
@@ -1817,6 +1881,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @output
     @render_plotly
     def ora_heatmap() -> Any:
+        input.plot_refresh()
         result = ora_result.get()
         req(result is not None)
         assert result is not None

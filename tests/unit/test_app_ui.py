@@ -9,6 +9,7 @@ def _rendered_html() -> str:
 def test_workspace_sidebar_owns_branding_version_and_embedding_color_control() -> None:
     html = _rendered_html()
 
+    assert '<span class="sidebar-title">Workspace</span>' not in html
     assert html.index("cb-workspace-brand") < html.index('id="dataset"')
     assert html.index("ClustBuster logo") < html.index('class="cb-title"')
     assert "ClustBuster logo" in html
@@ -23,6 +24,9 @@ def test_workspace_sidebar_owns_branding_version_and_embedding_color_control() -
     assert 'id="embedding_plot"' in html and "height:1160px" in html
     assert "cb-import-report html-fill-container" in html
     assert 'id="dot_plot"' in html and "height:1100px" in html
+    assert "#dataset_progress.shiny-file-input-progress { height:1.5rem" in html
+    assert 'setInputValue("plot_refresh"' in html
+    assert 'addEventListener("visibilitychange"' in html
     assert 'id="marker_heatmap_container"' in html
     assert "height:900px" not in html
 
@@ -65,9 +69,14 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
 
 def test_feature_and_dot_plots_update_without_run_buttons() -> None:
     html = _rendered_html()
+    default_genes = (
+        "PTPRC, CD3E, CD4, CD8A, MS4A1, CD14, NKG7, EPCAM, PECAM1, "
+        "COL1A1, ACTA2, MKI67"
+    )
 
     assert 'id="run_feature"' not in html
     assert 'id="run_dotplot"' not in html
+    assert html.count(default_genes) == 2
     assert "Plots update automatically when the gene list changes." in html
     assert "The dot plot updates automatically when the gene list changes." in html
     assert 'id="feature_show_annotations"' in html

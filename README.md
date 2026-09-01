@@ -15,6 +15,8 @@ Requirements: Python 3.11–3.14 and [uv](https://docs.astral.sh/uv/).
 uv sync --extra dev
 uv run pytest
 uv run ruff check .
+CLUSTBUSTER_ENABLE_SEURAT_IMPORT=1 \
+CLUSTBUSTER_ENABLE_SCE_IMPORT=1 \
 uv run shiny run --reload src/clustbuster/app.py
 ```
 

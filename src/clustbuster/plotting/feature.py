@@ -1,56 +1,54 @@
-"""Plotly/WebGL feature-plot builder."""
+"""Static feature-plot builder."""
 
 from __future__ import annotations
 
 import numpy as np
-import plotly.graph_objects as go
+from matplotlib.figure import Figure
 
 
 def feature_gene_figure(
     coordinates: np.ndarray,
-    cell_ids: list[str],
     gene: str,
     expression: np.ndarray,
     annotations: tuple[tuple[float, float, str], ...] = (),
-) -> go.Figure:
-    figure = go.Figure(
-        go.Scattergl(
-            x=coordinates[:, 0],
-            y=coordinates[:, 1],
-            mode="markers",
-            name=gene,
-            showlegend=False,
-            customdata=np.column_stack([cell_ids, expression]),
-            hovertemplate=(
-                "Cell: %{customdata[0]}<br>Expression: %{customdata[1]:.3g}<extra></extra>"
-            ),
-            marker={
-                "size": 6,
-                "opacity": 0.8,
-                "color": expression,
-                "colorscale": "Viridis",
-                "showscale": True,
-                "colorbar": {"title": "Expression"},
+) -> Figure:
+    """Return a raster-friendly Matplotlib figure without browser-side point data."""
+
+    order = np.argsort(expression, kind="stable")
+    figure = Figure(figsize=(7.2, 5.2))
+    axes = figure.subplots()
+    figure.subplots_adjust(left=0.11, right=0.88, bottom=0.12, top=0.93)
+    points = axes.scatter(
+        coordinates[order, 0],
+        coordinates[order, 1],
+        c=expression[order],
+        cmap="viridis",
+        s=6,
+        alpha=0.8,
+        edgecolors="none",
+        rasterized=True,
+    )
+    colorbar = figure.colorbar(points, ax=axes, pad=0.02)
+    colorbar.set_label("Expression")
+    for x_position, y_position, label in annotations:
+        axes.annotate(
+            label,
+            (x_position, y_position),
+            ha="center",
+            va="center",
+            color="#19324a",
+            fontsize=11,
+            fontweight="bold",
+            bbox={
+                "boxstyle": "round,pad=0.25",
+                "facecolor": "white",
+                "edgecolor": "#738695",
+                "alpha": 0.82,
             },
         )
-    )
-    for x_position, y_position, label in annotations:
-        figure.add_annotation(
-            x=x_position,
-            y=y_position,
-            text=label,
-            showarrow=False,
-            font={"size": 15, "weight": 700, "color": "#19324a"},
-            bgcolor="rgba(255, 255, 255, 0.82)",
-            bordercolor="rgba(25, 50, 74, 0.35)",
-            borderpad=3,
-        )
-    figure.update_layout(
-        template="plotly_white",
-        height=520,
-        margin={"l": 50, "r": 80, "t": 25, "b": 50},
-        dragmode="lasso",
-        xaxis={"title": "Dimension 1"},
-        yaxis={"title": "Dimension 2", "scaleanchor": "x", "scaleratio": 1},
-    )
+    axes.set_xlabel("Dimension 1")
+    axes.set_ylabel("Dimension 2")
+    axes.set_aspect("equal", adjustable="datalim")
+    axes.set_title(gene)
+    axes.spines[["top", "right"]].set_visible(False)
     return figure

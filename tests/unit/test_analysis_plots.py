@@ -18,29 +18,29 @@ def _adata() -> ad.AnnData:
     )
 
 
-def test_feature_gene_figure_is_an_independent_webgl_plot() -> None:
+def test_feature_gene_figure_is_a_static_raster_friendly_plot() -> None:
     adata = _adata()
     result = extract_expression(adata, ExpressionSource.x(), ("CD3D", "LYZ"))
     coordinates = np.array([[0, 0], [1, 0], [2, 2], [3, 2]])
     figure = feature_gene_figure(
         coordinates,
-        adata.obs_names.tolist(),
         "CD3D",
         result.values["CD3D"].to_numpy(),
     )
-    assert len(figure.data) == 1
-    assert figure.data[0].type == "scattergl"
-    assert figure.data[0].name == "CD3D"
-    assert figure.layout.height == 520
+    axes = figure.axes[0]
+    assert axes.get_title() == "CD3D"
+    assert len(axes.collections) == 1
+    assert axes.collections[0].get_rasterized() is True
+    assert axes.get_xlabel() == "Dimension 1"
+    assert axes.get_ylabel() == "Dimension 2"
 
     labeled = feature_gene_figure(
         coordinates,
-        adata.obs_names.tolist(),
         "CD3D",
         result.values["CD3D"].to_numpy(),
         ((0.5, 0.0, "T cell"), (2.5, 2.0, "Myeloid")),
     )
-    assert [annotation.text for annotation in labeled.layout.annotations] == [
+    assert [annotation.get_text() for annotation in labeled.axes[0].texts] == [
         "T cell",
         "Myeloid",
     ]
