@@ -13,8 +13,8 @@ def feature_figure(
     coordinates: np.ndarray, cell_ids: list[str], result: ExpressionResult
 ) -> go.Figure:
     genes = list(result.values.columns)
-    figure = make_subplots(rows=1, cols=len(genes), subplot_titles=genes)
-    for column, gene in enumerate(genes, start=1):
+    figure = make_subplots(rows=len(genes), cols=1, subplot_titles=genes, vertical_spacing=0.04)
+    for row, gene in enumerate(genes, start=1):
         expression = result.values[gene].to_numpy()
         figure.add_trace(
             go.Scattergl(
@@ -33,24 +33,24 @@ def feature_figure(
                     "opacity": 0.8,
                     "color": expression,
                     "colorscale": "Viridis",
-                    "showscale": column == len(genes),
+                    "showscale": row == len(genes),
                     "colorbar": {"title": "Expression"},
                 },
             ),
-            row=1,
-            col=column,
+            row=row,
+            col=1,
         )
-        figure.update_xaxes(title_text="Dimension 1", row=1, col=column)
+        figure.update_xaxes(title_text="Dimension 1", row=row, col=1)
         figure.update_yaxes(
-            title_text="Dimension 2" if column == 1 else None,
-            row=1,
-            col=column,
-            scaleanchor=f"x{column}" if column > 1 else "x",
+            title_text="Dimension 2",
+            row=row,
+            col=1,
+            scaleanchor=f"x{row}" if row > 1 else "x",
             scaleratio=1,
         )
     figure.update_layout(
         template="plotly_white",
-        height=560,
+        height=max(520, 500 * len(genes)),
         margin={"l": 50, "r": 60, "t": 55, "b": 50},
         dragmode="lasso",
     )

@@ -60,5 +60,6 @@ def test_marker_heatmap_is_standardized_and_labeled() -> None:
     )
     figure = marker_heatmap_figure(result)
     assert figure.data[0].type == "heatmap"
+    assert any(trace.mode == "lines" for trace in figure.data[1:])
     assert figure.layout.title.text == "Top markers for cluster a"
     assert np.isfinite(np.asarray(figure.data[0].z)).all()

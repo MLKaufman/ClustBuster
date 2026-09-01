@@ -25,6 +25,8 @@ def test_feature_figure_uses_one_webgl_trace_per_gene() -> None:
     figure = feature_figure(coordinates, adata.obs_names.tolist(), result)
     assert len(figure.data) == 2
     assert all(trace.type == "scattergl" for trace in figure.data)
+    assert [trace.xaxis for trace in figure.data] == ["x", "x2"]
+    assert figure.layout.height == 1000
 
 
 def test_dotplot_figure_maps_fraction_to_marker_size() -> None:
@@ -34,3 +36,7 @@ def test_dotplot_figure_maps_fraction_to_marker_size() -> None:
     figure = dotplot_figure(result)
     assert figure.data[0].type == "scatter"
     assert len(figure.data[0].marker.size) == 4
+    assert [trace.mode for trace in figure.data[1:]] == ["lines", "lines"]
+    assert figure.layout.margin.l == 120
+    assert figure.layout.margin.b == 120
+    assert figure.layout.height <= 1060

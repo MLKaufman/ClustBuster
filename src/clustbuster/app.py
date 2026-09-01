@@ -185,7 +185,7 @@ app_ui = ui.page_fillable(
                     fill=False,
                 ),
                 ui.output_ui("feature_feedback"),
-                output_widget("feature_plot", height="580px"),
+                ui.output_ui("feature_plot_container"),
             ),
             ui.nav_panel(
                 "Dot plot",
@@ -206,7 +206,82 @@ app_ui = ui.page_fillable(
                     fill=False,
                 ),
                 ui.output_ui("dotplot_feedback"),
-                output_widget("dot_plot", height="580px"),
+                output_widget("dot_plot", height="1100px"),
+            ),
+            ui.nav_panel(
+                "Module scores",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_select(
+                            "module_preset",
+                            "Gene-set preset",
+                            {
+                                "custom": "Custom gene set",
+                                **{preset.key: preset.label for preset in MODULE_PRESETS},
+                            },
+                            selected="t_cell",
+                        ),
+                        ui.input_text(
+                            "module_name", "Score label", value="T cell module"
+                        ),
+                        ui.input_action_button(
+                            "run_module", "Calculate score", class_="btn-primary"
+                        ),
+                        col_widths=(4, 5, 3),
+                    ),
+                    ui.input_text_area(
+                        "module_genes",
+                        "Genes",
+                        value="CD3D, IL7R",
+                        placeholder="Comma, space, or newline separated",
+                        rows=3,
+                    ),
+                    ui.help_text(
+                        "Scores are the mean of per-gene standardized expression "
+                        "for the selected expression source."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("module_feedback"),
+                output_widget("module_plot", height="580px"),
+                ui.card(
+                    ui.card_header("Cluster summary"),
+                    ui.output_data_frame("module_summary"),
+                ),
+            ),
+            ui.nav_panel(
+                "Top Markers",
+                ui.card(
+                    ui.layout_columns(
+                        ui.input_select("marker_cluster", "Selected cluster", {}),
+                        ui.input_numeric(
+                            "marker_top_n", "Top genes", value=12, min=1, max=50
+                        ),
+                        ui.input_numeric(
+                            "marker_min_fraction",
+                            "Minimum expressing fraction",
+                            value=0.1,
+                            min=0,
+                            max=1,
+                            step=0.05,
+                        ),
+                        ui.input_action_button(
+                            "run_markers", "Rank markers", class_="btn-primary"
+                        ),
+                        col_widths=(3, 2, 4, 3),
+                    ),
+                    ui.help_text(
+                        "Ranks positive markers for the selected cluster versus all "
+                        "remaining cells using Welch's t-test with Benjamini-Hochberg correction."
+                    ),
+                    fill=False,
+                ),
+                ui.output_ui("marker_feedback"),
+                ui.card(
+                    ui.card_header("Ranked markers"),
+                    ui.output_data_frame("marker_table"),
+                ),
+                output_widget("marker_heatmap", height="900px"),
             ),
             ui.nav_panel(
                 "MarkerCodex",
@@ -276,81 +351,6 @@ app_ui = ui.page_fillable(
                     ui.output_data_frame("reference_prediction_table"),
                 ),
                 output_widget("reference_correlation_plot", height="560px"),
-            ),
-            ui.nav_panel(
-                "Module scores",
-                ui.card(
-                    ui.layout_columns(
-                        ui.input_select(
-                            "module_preset",
-                            "Gene-set preset",
-                            {
-                                "custom": "Custom gene set",
-                                **{preset.key: preset.label for preset in MODULE_PRESETS},
-                            },
-                            selected="t_cell",
-                        ),
-                        ui.input_text(
-                            "module_name", "Score label", value="T cell module"
-                        ),
-                        ui.input_action_button(
-                            "run_module", "Calculate score", class_="btn-primary"
-                        ),
-                        col_widths=(4, 5, 3),
-                    ),
-                    ui.input_text_area(
-                        "module_genes",
-                        "Genes",
-                        value="CD3D, IL7R",
-                        placeholder="Comma, space, or newline separated",
-                        rows=3,
-                    ),
-                    ui.help_text(
-                        "Scores are the mean of per-gene standardized expression "
-                        "for the selected expression source."
-                    ),
-                    fill=False,
-                ),
-                ui.output_ui("module_feedback"),
-                output_widget("module_plot", height="580px"),
-                ui.card(
-                    ui.card_header("Cluster summary"),
-                    ui.output_data_frame("module_summary"),
-                ),
-            ),
-            ui.nav_panel(
-                "Markers & heatmap",
-                ui.card(
-                    ui.layout_columns(
-                        ui.input_select("marker_cluster", "Selected cluster", {}),
-                        ui.input_numeric(
-                            "marker_top_n", "Top genes", value=12, min=1, max=50
-                        ),
-                        ui.input_numeric(
-                            "marker_min_fraction",
-                            "Minimum expressing fraction",
-                            value=0.1,
-                            min=0,
-                            max=1,
-                            step=0.05,
-                        ),
-                        ui.input_action_button(
-                            "run_markers", "Rank markers", class_="btn-primary"
-                        ),
-                        col_widths=(3, 2, 4, 3),
-                    ),
-                    ui.help_text(
-                        "Ranks positive markers for the selected cluster versus all "
-                        "remaining cells using Welch's t-test with Benjamini-Hochberg correction."
-                    ),
-                    fill=False,
-                ),
-                ui.output_ui("marker_feedback"),
-                ui.card(
-                    ui.card_header("Ranked markers"),
-                    ui.output_data_frame("marker_table"),
-                ),
-                output_widget("marker_heatmap", height="520px"),
             ),
             ui.nav_panel(
                 "Enrichment",
@@ -838,6 +838,15 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return ui.div(
             f"Matched {len(result.report.matched)} gene(s).", class_="alert alert-success"
         )
+
+    @output
+    @render.ui
+    def feature_plot_container() -> ui.TagChild:
+        result = feature_result.get()
+        if result is None:
+            return ui.div()
+        height = max(520, 500 * len(result.values.columns))
+        return output_widget("feature_plot", width="100%", height=f"{height}px")
 
     @output
     @render_plotly

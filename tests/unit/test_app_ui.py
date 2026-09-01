@@ -22,6 +22,8 @@ def test_workspace_sidebar_owns_branding_version_and_embedding_color_control() -
     assert "height:1160px; min-height:1160px" in html
     assert 'id="embedding_plot"' in html and "height:1160px" in html
     assert "cb-import-report html-fill-container" in html
+    assert 'id="dot_plot"' in html and "height:1100px" in html
+    assert 'id="marker_heatmap"' in html and "height:900px" in html
 
 
 def test_annotation_sidebar_uses_only_the_autosaving_table_editor() -> None:
@@ -47,7 +49,12 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     html = _rendered_html()
 
     assert 'id="initialize_workspace_control"' in html
+    assert 'id="feature_plot_container"' in html
     assert 'data-value="MarkerCodex"' in html
     assert 'data-value="Refmats"' in html
+    assert 'data-value="Top Markers"' in html
     assert 'data-value="Resources"' not in html
     assert 'data-value="Reference annotation"' not in html
+    assert 'data-value="Markers &amp; heatmap"' not in html
+    assert html.index('data-value="Module scores"') < html.index('data-value="MarkerCodex"')
+    assert html.index('data-value="Top Markers"') < html.index('data-value="MarkerCodex"')
