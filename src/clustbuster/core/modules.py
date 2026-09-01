@@ -59,22 +59,29 @@ def calculate_module_score(
     standard_deviations = matrix.std(axis=0)
     variable = standard_deviations > 0
     standardized = np.zeros_like(matrix, dtype=float)
-    standardized[:, variable] = (
-        matrix[:, variable] - means[variable]
-    ) / standard_deviations[variable]
+    standardized[:, variable] = (matrix[:, variable] - means[variable]) / standard_deviations[
+        variable
+    ]
     scores = standardized.mean(axis=1)
+
+    groups: dict[str, tuple[ClusterIdentifier, list[int]]] = {}
+    serialized_clusters: list[str] = []
+    display_clusters: list[str] = []
+    for index, raw_cluster in enumerate(adata.obs[cluster_column].tolist()):
+        cluster_id = ClusterIdentifier.from_value(raw_cluster)
+        serialized_clusters.append(cluster_id.serialized)
+        display_clusters.append(cluster_id.display)
+        groups.setdefault(cluster_id.serialized, (cluster_id, []))[1].append(index)
 
     values = pd.DataFrame(
         {
             "cell_id": adata.obs_names.astype(str),
+            "cluster_id": serialized_clusters,
+            "cluster": display_clusters,
             "module_score": scores,
         },
         index=adata.obs_names.astype(str),
     )
-    groups: dict[str, tuple[ClusterIdentifier, list[int]]] = {}
-    for index, raw_cluster in enumerate(adata.obs[cluster_column].tolist()):
-        cluster_id = ClusterIdentifier.from_value(raw_cluster)
-        groups.setdefault(cluster_id.serialized, (cluster_id, []))[1].append(index)
 
     summary_rows: list[dict[str, object]] = []
     for cluster_id, indices in groups.values():

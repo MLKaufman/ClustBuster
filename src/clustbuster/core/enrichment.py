@@ -20,5 +20,14 @@ class EnrichmentResult:
     values: pd.DataFrame
 
 
+@dataclass(slots=True)
+class AllClusterOraResult:
+    library: str
+    source: str
+    markers: pd.DataFrame
+    values: pd.DataFrame
+    failures: tuple[str, ...]
+
+
 class EnrichmentProvider(Protocol):
     def enrich(self, genes: tuple[str, ...], *, description: str) -> EnrichmentResult: ...

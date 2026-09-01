@@ -28,6 +28,13 @@ class MarkerResult:
     heatmap: pd.DataFrame
 
 
+@dataclass(slots=True)
+class AllMarkerResult:
+    method: str
+    values: pd.DataFrame
+    failures: tuple[str, ...]
+
+
 def _group_statistics(matrix: Any, mask: np.ndarray) -> tuple[np.ndarray, ...]:
     subset = matrix[mask, :]
     count = int(mask.sum())
@@ -86,6 +93,7 @@ def rank_markers(
     *,
     top_n: int = 15,
     min_fraction: float = 0.1,
+    min_log_fold_change: float = 0.0,
 ) -> MarkerResult:
     """Rank positive markers for one cluster versus all other cells using Welch's t-test."""
 
@@ -95,6 +103,8 @@ def rank_markers(
         raise MarkerAnalysisError("Top gene count must be between 1 and 100")
     if not 0 <= min_fraction <= 1:
         raise MarkerAnalysisError("Minimum expressing fraction must be between 0 and 1")
+    if min_log_fold_change < 0:
+        raise MarkerAnalysisError("Minimum log fold-change must be zero or greater")
 
     clusters = adata.obs[cluster_column].tolist()
     serialized = np.array(
@@ -142,12 +152,15 @@ def rank_markers(
             "mean_selected": selected_mean,
             "mean_rest": rest_mean,
             "mean_difference": mean_difference,
+            "log_fold_change": mean_difference,
             "fraction_selected": selected_fraction,
             "fraction_rest": rest_fraction,
         }
     )
     table = table.loc[
-        (table["fraction_selected"] >= min_fraction) & (table["mean_difference"] > 0)
+        (table["fraction_selected"] >= min_fraction)
+        & (table["log_fold_change"] >= min_log_fold_change)
+        & (table["mean_difference"] > 0)
     ].sort_values(["p_adjusted", "score"], ascending=[True, False])
     table = table.head(top_n).reset_index(drop=True)
     if table.empty:
@@ -165,3 +178,52 @@ def rank_markers(
         clusters[int(np.flatnonzero(selected_mask)[0])]
     ).display
     return MarkerResult(selected_display, "Welch t-test", table, heatmap)
+
+
+def rank_all_markers(
+    adata: AnnData,
+    source: ExpressionSource,
+    cluster_column: str,
+    *,
+    top_n_per_cluster: int = 25,
+    min_fraction: float = 0.1,
+    min_log_fold_change: float = 0.25,
+) -> AllMarkerResult:
+    """Rank positive one-vs-rest markers for every source cluster."""
+
+    if cluster_column not in adata.obs:
+        raise MarkerAnalysisError(f"Unknown cluster column: {cluster_column}")
+    identifiers: dict[str, ClusterIdentifier] = {}
+    for raw_cluster in adata.obs[cluster_column].tolist():
+        identifier = ClusterIdentifier.from_value(raw_cluster)
+        identifiers.setdefault(identifier.serialized, identifier)
+
+    frames: list[pd.DataFrame] = []
+    failures: list[str] = []
+    for serialized, identifier in identifiers.items():
+        try:
+            result = rank_markers(
+                adata,
+                source,
+                cluster_column,
+                serialized,
+                top_n=top_n_per_cluster,
+                min_fraction=min_fraction,
+                min_log_fold_change=min_log_fold_change,
+            )
+        except MarkerAnalysisError as exc:
+            failures.append(f"Cluster {identifier.display}: {exc}")
+            continue
+        values = result.values.copy()
+        values.insert(1, "cluster_id", serialized)
+        values.insert(2, "cluster", identifier.display)
+        frames.append(values)
+
+    if not frames:
+        details = "; ".join(failures)
+        raise MarkerAnalysisError(f"No clusters produced marker genes. {details}")
+    return AllMarkerResult(
+        method="Welch t-test (one-vs-rest)",
+        values=pd.concat(frames, ignore_index=True),
+        failures=tuple(failures),
+    )

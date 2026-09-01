@@ -26,6 +26,7 @@ def _adata() -> ad.AnnData:
 
 def test_parse_gene_list_deduplicates_and_limits() -> None:
     assert parse_gene_list("CD3D, LYZ\nCD3D") == ("CD3D", "LYZ")
+    assert len(parse_gene_list(" ".join(f"G{i}" for i in range(30)), limit=None)) == 30
     with pytest.raises(GeneMatchError, match="at least one"):
         parse_gene_list("  , ")
     with pytest.raises(GeneMatchError, match="limited"):
@@ -55,9 +56,7 @@ def test_no_matching_genes_has_actionable_error() -> None:
 
 
 def test_dotplot_aggregation_reports_fraction_and_mean() -> None:
-    result = aggregate_dotplot(
-        _adata(), ExpressionSource.x(), "cluster", ("CD3D", "LYZ")
-    )
+    result = aggregate_dotplot(_adata(), ExpressionSource.x(), "cluster", ("CD3D", "LYZ"))
     cluster_a_cd3d = result.values.query("cluster_display == 'a' and gene == 'CD3D'").iloc[0]
     cluster_b_lyz = result.values.query("cluster_display == 'b' and gene == 'LYZ'").iloc[0]
     assert cluster_a_cd3d["fraction_expressing"] == 1.0

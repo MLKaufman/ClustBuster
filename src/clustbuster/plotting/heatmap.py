@@ -10,6 +10,10 @@ from clustbuster.core.markers import MarkerResult
 from clustbuster.plotting.hierarchy import cluster_hierarchy, standardize_columns
 
 
+def marker_heatmap_height(cluster_count: int) -> int:
+    return min(860, max(560, 24 * cluster_count + 220))
+
+
 def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
     standardized = standardize_columns(result.heatmap.to_numpy(dtype=float))
     row_hierarchy = cluster_hierarchy(standardized)
@@ -30,7 +34,7 @@ def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
         cols=2,
         specs=[[None, {}], [{}, {}]],
         row_heights=[0.16, 0.84],
-        column_widths=[0.16, 0.84],
+        column_widths=[0.02, 0.98],
         horizontal_spacing=0.01,
         vertical_spacing=0.01,
         shared_xaxes="columns",
@@ -66,24 +70,10 @@ def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
             row=1,
             col=2,
         )
-    for leaves, distances in row_hierarchy.segments:
-        figure.add_trace(
-            go.Scatter(
-                x=distances,
-                y=leaves,
-                mode="lines",
-                line={"color": "#526b7a", "width": 1.4},
-                hoverinfo="skip",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
-
     figure.update_layout(
         title=f"Top markers for cluster {result.selected_cluster}",
         template="plotly_white",
-        height=min(860, max(560, 24 * len(cluster_labels) + 220)),
+        height=marker_heatmap_height(len(cluster_labels)),
         margin={"l": 35, "r": 90, "t": 65, "b": 115},
     )
     figure.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=2)
@@ -110,6 +100,10 @@ def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
         tickmode="array",
         tickvals=y_positions,
         ticktext=cluster_labels,
+        showticklabels=True,
+        side="left",
+        ticklabelposition="outside left",
+        automargin=True,
         autorange="reversed",
         row=2,
         col=2,

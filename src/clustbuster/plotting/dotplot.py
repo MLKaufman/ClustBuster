@@ -14,9 +14,7 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
     cluster_ids = list(dict.fromkeys(values["cluster_id"].astype(str)))
     genes = list(dict.fromkeys(values["gene"].astype(str)))
     cluster_labels = (
-        values.drop_duplicates("cluster_id")
-        .set_index("cluster_id")["cluster_display"]
-        .astype(str)
+        values.drop_duplicates("cluster_id").set_index("cluster_id")["cluster_display"].astype(str)
     )
     mean_matrix = (
         values.pivot(index="cluster_id", columns="gene", values="mean_expression")
@@ -40,7 +38,7 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
         cols=2,
         specs=[[None, {}], [{}, {}]],
         row_heights=[0.16, 0.84],
-        column_widths=[0.16, 0.84],
+        column_widths=[0.02, 0.98],
         horizontal_spacing=0.01,
         vertical_spacing=0.01,
         shared_xaxes="columns",
@@ -85,20 +83,6 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
             row=1,
             col=2,
         )
-    for leaves, distances in row_hierarchy.segments:
-        figure.add_trace(
-            go.Scatter(
-                x=distances,
-                y=leaves,
-                mode="lines",
-                line={"color": "#526b7a", "width": 1.4},
-                hoverinfo="skip",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
-
     cluster_count = len(ordered_cluster_ids)
     figure.update_layout(
         template="plotly_white",
@@ -116,11 +100,8 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
         col=1,
     )
     figure.update_yaxes(
-        title="Cluster",
-        tickmode="array",
-        tickvals=list(y_positions.values()),
-        ticktext=[str(cluster_labels.loc[cluster_id]) for cluster_id in ordered_cluster_ids],
         autorange="reversed",
+        showticklabels=False,
         showgrid=False,
         zeroline=False,
         row=2,
@@ -136,7 +117,14 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
         col=2,
     )
     figure.update_yaxes(
-        showticklabels=False,
+        title="Cluster",
+        tickmode="array",
+        tickvals=list(y_positions.values()),
+        ticktext=[str(cluster_labels.loc[cluster_id]) for cluster_id in ordered_cluster_ids],
+        showticklabels=True,
+        side="left",
+        ticklabelposition="outside left",
+        automargin=True,
         autorange="reversed",
         row=2,
         col=2,

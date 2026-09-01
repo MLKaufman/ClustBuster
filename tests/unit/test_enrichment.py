@@ -43,6 +43,4 @@ def test_enrichr_network_error_is_actionable() -> None:
         raise URLError("offline")
 
     with pytest.raises(EnrichmentError, match="service is unavailable"):
-        EnrichrClient(reader=unavailable).enrich(
-            ("CD3D", "IL7R"), description="offline test"
-        )
+        EnrichrClient(reader=unavailable).enrich(("CD3D", "IL7R"), description="offline test")

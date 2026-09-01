@@ -16,9 +16,7 @@ def enrichment_figure(result: EnrichmentResult, *, top_n: int = 12) -> go.Figure
             x=significance,
             y=table["term"],
             orientation="h",
-            customdata=np.column_stack(
-                [table["overlap_genes"], table["adjusted_p_value"]]
-            ),
+            customdata=np.column_stack([table["overlap_genes"], table["adjusted_p_value"]]),
             hovertemplate=(
                 "Term: %{y}<br>-log10 adjusted p: %{x:.3f}<br>Adjusted p: "
                 "%{customdata[1]:.3g}<br>Genes: %{customdata[0]}<extra></extra>"

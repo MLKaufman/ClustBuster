@@ -23,7 +23,8 @@ def test_workspace_sidebar_owns_branding_version_and_embedding_color_control() -
     assert 'id="embedding_plot"' in html and "height:1160px" in html
     assert "cb-import-report html-fill-container" in html
     assert 'id="dot_plot"' in html and "height:1100px" in html
-    assert 'id="marker_heatmap"' in html and "height:900px" in html
+    assert 'id="marker_heatmap_container"' in html
+    assert "height:900px" not in html
 
 
 def test_annotation_sidebar_uses_only_the_autosaving_table_editor() -> None:
@@ -53,8 +54,69 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     assert 'data-value="MarkerCodex"' in html
     assert 'data-value="Refmats"' in html
     assert 'data-value="Top Markers"' in html
+    assert 'data-value="ORA"' in html
+    assert 'data-value="Enrichment"' not in html
     assert 'data-value="Resources"' not in html
     assert 'data-value="Reference annotation"' not in html
     assert 'data-value="Markers &amp; heatmap"' not in html
     assert html.index('data-value="Module scores"') < html.index('data-value="MarkerCodex"')
     assert html.index('data-value="Top Markers"') < html.index('data-value="MarkerCodex"')
+
+
+def test_feature_and_dot_plots_update_without_run_buttons() -> None:
+    html = _rendered_html()
+
+    assert 'id="run_feature"' not in html
+    assert 'id="run_dotplot"' not in html
+    assert "Plots update automatically when the gene list changes." in html
+    assert "The dot plot updates automatically when the gene list changes." in html
+    assert 'id="feature_show_annotations"' in html
+
+
+def test_module_scores_include_per_cell_violin_plot() -> None:
+    html = _rendered_html()
+
+    assert 'class="cb-module-stack"' in html
+    assert 'id="module_plot"' in html
+    assert 'id="module_violin_plot"' in html
+
+
+def test_top_markers_has_logfc_and_embedded_enrichment_controls() -> None:
+    html = _rendered_html()
+
+    marker_top_n = html.index('id="marker_top_n"')
+    assert 'value="25"' in html[marker_top_n : marker_top_n + 220]
+    assert 'id="marker_min_logfc"' in html
+    assert 'id="run_marker_enrichment"' in html
+    assert 'id="marker_enrichment_plot"' in html
+    assert 'id="marker_enrichment_table_container"' in html
+    assert 'class="cb-top-markers-stack"' in html
+    assert "#marker_heatmap_container { display:block" in html
+    assert html.index('id="marker_heatmap_container"') < html.index('id="run_marker_enrichment"')
+
+
+def test_ora_tab_runs_all_cluster_markers_and_pathway_heatmap() -> None:
+    html = _rendered_html()
+
+    assert 'id="ora_library"' in html
+    assert "GO Biological Process 2025" in html
+    assert 'id="run_ora"' in html
+    assert 'id="ora_heatmap_container"' in html
+    assert 'id="ora_marker_table"' in html
+    assert 'id="ora_table"' in html
+    assert "Ranks positive markers one cluster versus all remaining cells" in html
+
+
+def test_refmats_uses_scrollable_stack_and_includes_correlation_table() -> None:
+    html = _rendered_html()
+
+    assert 'class="cb-refmats-stack"' in html
+    assert 'id="reference_correlation_container"' in html
+    assert 'id="reference_correlation_table"' in html
+    assert 'id="discard_reference_predictions"' not in html
+    assert html.index('id="apply_reference_predictions"') < html.index(
+        'id="reference_prediction_table"'
+    )
+    assert html.index('id="reference_correlation_container"') < html.index(
+        'id="reference_correlation_table"'
+    )

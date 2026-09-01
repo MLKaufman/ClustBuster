@@ -13,7 +13,7 @@ from shinywidgets import output_widget, render_plotly
 
 from clustbuster import __version__
 from clustbuster.config import AppConfig
-from clustbuster.core.enrichment import EnrichmentResult
+from clustbuster.core.enrichment import AllClusterOraResult, EnrichmentError, EnrichmentResult
 from clustbuster.core.expression import (
     DotPlotResult,
     ExpressionResult,
@@ -21,7 +21,7 @@ from clustbuster.core.expression import (
     extract_expression,
     parse_gene_list,
 )
-from clustbuster.core.markers import MarkerResult, rank_markers
+from clustbuster.core.markers import MarkerResult, rank_all_markers, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
@@ -42,10 +42,14 @@ from clustbuster.models import (
 from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.enrichment import enrichment_figure
-from clustbuster.plotting.feature import feature_figure
-from clustbuster.plotting.heatmap import marker_heatmap_figure
-from clustbuster.plotting.module import module_score_figure
-from clustbuster.plotting.reference import reference_correlation_figure
+from clustbuster.plotting.feature import feature_gene_figure
+from clustbuster.plotting.heatmap import marker_heatmap_figure, marker_heatmap_height
+from clustbuster.plotting.module import module_score_figure, module_score_violin_figure
+from clustbuster.plotting.ora import ora_heatmap_figure, ora_heatmap_height
+from clustbuster.plotting.reference import (
+    reference_correlation_figure,
+    reference_correlation_height,
+)
 from clustbuster.resources.markers.csv import CsvMarkerProvider
 from clustbuster.resources.references.local import LocalReferenceProvider
 from clustbuster.services.exports import WorkspaceExportService
@@ -55,6 +59,14 @@ from clustbuster.services.workspaces import configure_workspace
 config = AppConfig.from_env()
 logging.basicConfig(level=config.log_level)
 logger = logging.getLogger("clustbuster")
+_ORA_LIBRARIES = {
+    DEFAULT_LIBRARY: "GO Biological Process 2025",
+    "GO_Molecular_Function_2025": "GO Molecular Function 2025",
+    "GO_Cellular_Component_2025": "GO Cellular Component 2025",
+    "Reactome_Pathways_2024": "Reactome Pathways 2024",
+    "KEGG_2021_Human": "KEGG Human 2021",
+    "MSigDB_Hallmark_2020": "MSigDB Hallmark 2020",
+}
 _upload_accept = [".h5ad", "application/x-hdf5"]
 if config.enable_seurat_import:
     _upload_accept.extend([".rds", ".h5seurat"])
@@ -97,6 +109,28 @@ def _styles() -> ui.Tag:
         .cb-cluster-summary { background:#fff; border:1px solid #dbe4e8;
                               border-radius:.5rem; padding:.75rem; }
         .cb-cluster-summary p { margin-bottom:0; }
+        .cb-feature-stack { display:flex; flex-direction:column; gap:1rem; }
+        .cb-module-stack { display:flex; flex-direction:column; gap:1rem; width:100%;
+                           padding-bottom:1rem; }
+        .cb-module-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        .cb-top-markers-stack { display:flex; flex-direction:column; gap:1rem;
+                                width:100%; padding-bottom:1rem; }
+        .cb-top-markers-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        #marker_heatmap_container { display:block; width:100%; flex:0 0 auto !important; }
+        .cb-marker-heatmap-frame { display:block; width:100%; flex:none !important; }
+        #marker_enrichment_plot { display:block; width:100%; flex:0 0 560px !important;
+                                  min-height:560px; }
+        .cb-ora-stack { display:flex; flex-direction:column; gap:1rem; width:100%;
+                        padding-bottom:1rem; }
+        .cb-ora-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        #ora_heatmap_container { display:block; width:100%; flex:0 0 auto !important; }
+        .cb-ora-heatmap-frame { display:block; width:100%; flex:none !important; }
+        .cb-refmats-stack { display:flex; flex-direction:column; gap:1rem; width:100%;
+                            padding-bottom:1rem; }
+        .cb-refmats-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        #reference_correlation_container { display:block; width:100%;
+                                           flex:0 0 auto !important; }
+        .cb-reference-heatmap-frame { display:block; width:100%; flex:none !important; }
         #dataset_progress.shiny-file-input-progress { height:1rem; min-height:1rem;
                                                        margin-top:.65rem; margin-bottom:1rem;
                                                        border-radius:.5rem; overflow:hidden; }
@@ -169,19 +203,19 @@ app_ui = ui.page_fillable(
             ui.nav_panel(
                 "Feature plot",
                 ui.card(
-                    ui.layout_columns(
-                        ui.input_text_area(
-                            "feature_genes",
-                            "Genes",
-                            value="CD3D, LYZ",
-                            placeholder="Comma, space, or newline separated",
-                            rows=2,
-                        ),
-                        ui.input_action_button(
-                            "run_feature", "Run feature plot", class_="btn-primary"
-                        ),
-                        col_widths=(9, 3),
+                    ui.input_text_area(
+                        "feature_genes",
+                        "Genes",
+                        value="CD3D, LYZ",
+                        placeholder="Comma, space, or newline separated",
+                        rows=2,
                     ),
+                    ui.input_checkbox(
+                        "feature_show_annotations",
+                        "Show cluster annotations on plots",
+                        value=False,
+                    ),
+                    ui.help_text("Plots update automatically when the gene list changes."),
                     fill=False,
                 ),
                 ui.output_ui("feature_feedback"),
@@ -190,19 +224,14 @@ app_ui = ui.page_fillable(
             ui.nav_panel(
                 "Dot plot",
                 ui.card(
-                    ui.layout_columns(
-                        ui.input_text_area(
-                            "dot_genes",
-                            "Gene panel",
-                            value="CD3D, LYZ, MS4A1, NKG7",
-                            placeholder="Comma, space, or newline separated",
-                            rows=2,
-                        ),
-                        ui.input_action_button(
-                            "run_dotplot", "Run dot plot", class_="btn-primary"
-                        ),
-                        col_widths=(9, 3),
+                    ui.input_text_area(
+                        "dot_genes",
+                        "Gene panel",
+                        value="CD3D, LYZ, MS4A1, NKG7",
+                        placeholder="Comma, space, or newline separated",
+                        rows=2,
                     ),
+                    ui.help_text("The dot plot updates automatically when the gene list changes."),
                     fill=False,
                 ),
                 ui.output_ui("dotplot_feedback"),
@@ -210,78 +239,128 @@ app_ui = ui.page_fillable(
             ),
             ui.nav_panel(
                 "Module scores",
-                ui.card(
-                    ui.layout_columns(
-                        ui.input_select(
-                            "module_preset",
-                            "Gene-set preset",
-                            {
-                                "custom": "Custom gene set",
-                                **{preset.key: preset.label for preset in MODULE_PRESETS},
-                            },
-                            selected="t_cell",
+                ui.div(
+                    ui.card(
+                        ui.layout_columns(
+                            ui.input_select(
+                                "module_preset",
+                                "Gene-set preset",
+                                {
+                                    "custom": "Custom gene set",
+                                    **{preset.key: preset.label for preset in MODULE_PRESETS},
+                                },
+                                selected="t_cell",
+                            ),
+                            ui.input_text("module_name", "Score label", value="T cell module"),
+                            ui.input_action_button(
+                                "run_module", "Calculate score", class_="btn-primary"
+                            ),
+                            col_widths=(4, 5, 3),
                         ),
-                        ui.input_text(
-                            "module_name", "Score label", value="T cell module"
+                        ui.input_text_area(
+                            "module_genes",
+                            "Genes",
+                            value="CD3D, IL7R",
+                            placeholder="Comma, space, or newline separated",
+                            rows=3,
                         ),
-                        ui.input_action_button(
-                            "run_module", "Calculate score", class_="btn-primary"
+                        ui.help_text(
+                            "Scores are the mean of per-gene standardized expression "
+                            "for the selected expression source."
                         ),
-                        col_widths=(4, 5, 3),
+                        fill=False,
                     ),
-                    ui.input_text_area(
-                        "module_genes",
-                        "Genes",
-                        value="CD3D, IL7R",
-                        placeholder="Comma, space, or newline separated",
-                        rows=3,
+                    ui.output_ui("module_feedback"),
+                    output_widget("module_plot", height="580px"),
+                    output_widget("module_violin_plot", height="620px"),
+                    ui.card(
+                        ui.card_header("Cluster summary"),
+                        ui.output_data_frame("module_summary"),
+                        fill=False,
                     ),
-                    ui.help_text(
-                        "Scores are the mean of per-gene standardized expression "
-                        "for the selected expression source."
-                    ),
-                    fill=False,
-                ),
-                ui.output_ui("module_feedback"),
-                output_widget("module_plot", height="580px"),
-                ui.card(
-                    ui.card_header("Cluster summary"),
-                    ui.output_data_frame("module_summary"),
+                    class_="cb-module-stack",
                 ),
             ),
             ui.nav_panel(
                 "Top Markers",
-                ui.card(
-                    ui.layout_columns(
-                        ui.input_select("marker_cluster", "Selected cluster", {}),
-                        ui.input_numeric(
-                            "marker_top_n", "Top genes", value=12, min=1, max=50
+                ui.div(
+                    ui.card(
+                        ui.layout_columns(
+                            ui.input_select("marker_cluster", "Selected cluster", {}),
+                            ui.input_numeric("marker_top_n", "Top genes", value=25, min=1, max=50),
+                            ui.input_numeric(
+                                "marker_min_fraction",
+                                "Minimum expressing fraction",
+                                value=0.1,
+                                min=0,
+                                max=1,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "marker_min_logfc",
+                                "Minimum logFC",
+                                value=0.25,
+                                min=0,
+                                step=0.05,
+                            ),
+                            ui.input_action_button(
+                                "run_markers", "Rank markers", class_="btn-primary"
+                            ),
+                            col_widths=(3, 2, 3, 2, 2),
                         ),
-                        ui.input_numeric(
-                            "marker_min_fraction",
-                            "Minimum expressing fraction",
-                            value=0.1,
-                            min=0,
-                            max=1,
-                            step=0.05,
+                        ui.help_text(
+                            "Ranks positive markers for the selected cluster versus all "
+                            "remaining cells using Welch's t-test with "
+                            "Benjamini-Hochberg correction. "
+                            "logFC is the selected-minus-rest mean on the active expression scale."
                         ),
-                        ui.input_action_button(
-                            "run_markers", "Rank markers", class_="btn-primary"
-                        ),
-                        col_widths=(3, 2, 4, 3),
+                        fill=False,
                     ),
-                    ui.help_text(
-                        "Ranks positive markers for the selected cluster versus all "
-                        "remaining cells using Welch's t-test with Benjamini-Hochberg correction."
+                    ui.output_ui("marker_feedback"),
+                    ui.card(
+                        ui.card_header("Ranked markers"),
+                        ui.output_data_frame("marker_table"),
+                        fill=False,
                     ),
-                    fill=False,
+                    ui.output_ui("marker_heatmap_container"),
+                    ui.card(
+                        ui.card_header("Marker enrichment"),
+                        ui.layout_columns(
+                            ui.input_select(
+                                "marker_enrichment_library",
+                                "Gene-set library",
+                                {DEFAULT_LIBRARY: "GO Biological Process 2025"},
+                            ),
+                            ui.input_numeric(
+                                "marker_enrichment_top_n",
+                                "Terms to display",
+                                value=12,
+                                min=3,
+                                max=30,
+                            ),
+                            ui.input_action_button(
+                                "run_marker_enrichment",
+                                "Run enrichment",
+                                class_="btn-primary",
+                            ),
+                            col_widths=(5, 3, 4),
+                        ),
+                        ui.help_text(
+                            "Uses the ranked marker genes above. Running enrichment sends only "
+                            "those gene symbols to the Ma'ayan Lab Enrichr service; expression "
+                            "values and cell metadata are not transmitted."
+                        ),
+                        fill=False,
+                    ),
+                    ui.output_ui("marker_enrichment_feedback"),
+                    output_widget("marker_enrichment_plot", height="560px"),
+                    ui.card(
+                        ui.card_header("Enriched terms"),
+                        ui.output_ui("marker_enrichment_table_container"),
+                        fill=False,
+                    ),
+                    class_="cb-top-markers-stack",
                 ),
-                ui.output_ui("marker_feedback"),
-                ui.card(
-                    ui.card_header("Ranked markers"),
-                    ui.output_data_frame("marker_table"),
-                ),
-                output_widget("marker_heatmap", height="900px"),
             ),
             ui.nav_panel(
                 "MarkerCodex",
@@ -292,9 +371,7 @@ app_ui = ui.page_fillable(
                         ui.input_text(
                             "marker_query", "Cell-type search", placeholder="e.g. T cell"
                         ),
-                        ui.input_select(
-                            "marker_species", "Species", {"human": "Human"}
-                        ),
+                        ui.input_select("marker_species", "Species", {"human": "Human"}),
                         ui.input_select("marker_tissue", "Tissue", {"blood": "Blood"}),
                         ui.input_action_button(
                             "search_markers", "Search catalog", class_="btn-primary"
@@ -305,9 +382,7 @@ app_ui = ui.page_fillable(
                     ui.layout_columns(
                         ui.input_select("catalog_cell_type", "Cell type", {}),
                         ui.input_action_button("load_marker_set", "Load marker set"),
-                        ui.input_action_button(
-                            "use_markers_feature", "Use in feature plot"
-                        ),
+                        ui.input_action_button("use_markers_feature", "Use in feature plot"),
                         ui.input_action_button("use_markers_dot", "Use in dot plot"),
                         col_widths=(4, 3, 3, 2),
                     ),
@@ -325,62 +400,104 @@ app_ui = ui.page_fillable(
             ),
             ui.nav_panel(
                 "Refmats",
-                ui.card(
-                    ui.card_header("Reference-based cluster annotation"),
-                    ui.output_ui("reference_annotation_controls"),
-                    ui.help_text(
-                        "Scoring runs locally with pyclustifyr. Results remain a preview until "
-                        "you explicitly apply them to the current annotation state."
+                ui.div(
+                    ui.card(
+                        ui.card_header("Reference-based cluster annotation"),
+                        ui.output_ui("reference_annotation_controls"),
+                        ui.help_text(
+                            "Scoring runs locally with pyclustifyr. Results remain a preview "
+                            "until you explicitly apply them to the current annotation state."
+                        ),
+                        fill=False,
                     ),
-                    fill=False,
-                ),
-                ui.output_ui("reference_annotation_feedback"),
-                ui.layout_columns(
-                    ui.input_action_button(
-                        "apply_reference_predictions",
-                        "Apply predictions",
-                        class_="btn-primary",
+                    ui.output_ui("reference_annotation_feedback"),
+                    ui.layout_columns(
+                        ui.input_action_button(
+                            "apply_reference_predictions",
+                            "Apply predictions",
+                            class_="btn-primary",
+                        ),
+                        col_widths=(3,),
                     ),
-                    ui.input_action_button(
-                        "discard_reference_predictions", "Discard preview"
+                    ui.card(
+                        ui.card_header("Prediction preview"),
+                        ui.output_data_frame("reference_prediction_table"),
+                        fill=False,
                     ),
-                    col_widths=(3, 3),
+                    ui.output_ui("reference_correlation_container"),
+                    ui.card(
+                        ui.card_header("Correlation matrix"),
+                        ui.output_data_frame("reference_correlation_table"),
+                        fill=False,
+                    ),
+                    class_="cb-refmats-stack",
                 ),
-                ui.card(
-                    ui.card_header("Prediction preview"),
-                    ui.output_data_frame("reference_prediction_table"),
-                ),
-                output_widget("reference_correlation_plot", height="560px"),
             ),
             ui.nav_panel(
-                "Enrichment",
-                ui.card(
-                    ui.layout_columns(
-                        ui.input_select(
-                            "enrichment_library",
-                            "Gene-set library",
-                            {DEFAULT_LIBRARY: "GO Biological Process 2025"},
+                "ORA",
+                ui.div(
+                    ui.card(
+                        ui.layout_columns(
+                            ui.input_select(
+                                "ora_library",
+                                "Pathway library",
+                                _ORA_LIBRARIES,
+                                selected=DEFAULT_LIBRARY,
+                            ),
+                            ui.input_numeric(
+                                "ora_marker_top_n",
+                                "Markers per cluster",
+                                value=25,
+                                min=2,
+                                max=100,
+                            ),
+                            ui.input_numeric(
+                                "ora_min_fraction",
+                                "Minimum expressing fraction",
+                                value=0.1,
+                                min=0,
+                                max=1,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "ora_min_logfc",
+                                "Minimum logFC",
+                                value=0.25,
+                                min=0,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "ora_pathway_top_n",
+                                "Pathways to display",
+                                value=30,
+                                min=5,
+                                max=100,
+                            ),
+                            ui.input_action_button(
+                                "run_ora", "Run all-cluster ORA", class_="btn-primary"
+                            ),
+                            col_widths=(3, 2, 2, 2, 2, 3),
                         ),
-                        ui.input_numeric(
-                            "enrichment_top_n", "Terms to display", value=12, min=3, max=30
+                        ui.help_text(
+                            "Ranks positive markers one cluster versus all remaining cells, "
+                            "then runs over-representation analysis separately for every source "
+                            "cluster. Only marker gene symbols are sent to Enrichr."
                         ),
-                        ui.input_action_button(
-                            "run_enrichment", "Run enrichment", class_="btn-primary"
-                        ),
-                        col_widths=(5, 3, 4),
+                        fill=False,
                     ),
-                    ui.help_text(
-                        "Uses the current ranked marker genes. Running enrichment sends only "
-                        "those gene symbols to the Ma'ayan Lab Enrichr service; expression "
-                        "values and cell metadata are not transmitted."
+                    ui.output_ui("ora_feedback"),
+                    ui.output_ui("ora_heatmap_container"),
+                    ui.card(
+                        ui.card_header("All-cluster markers"),
+                        ui.output_data_frame("ora_marker_table"),
+                        fill=False,
                     ),
-                    fill=False,
-                ),
-                ui.output_ui("enrichment_feedback"),
-                output_widget("enrichment_plot", height="560px"),
-                ui.card(
-                    ui.card_header("Enriched terms"),
-                    ui.output_data_frame("enrichment_table"),
+                    ui.card(
+                        ui.card_header("Cluster pathway results"),
+                        ui.output_data_frame("ora_table"),
+                        fill=False,
+                    ),
+                    class_="cb-ora-stack",
                 ),
             ),
             ui.nav_panel(
@@ -388,9 +505,7 @@ app_ui = ui.page_fillable(
                 ui.output_ui("export_status"),
                 ui.card(
                     ui.card_header("Download annotations"),
-                    ui.p(
-                        "The ZIP contains separate cluster-level and cell-level CSV files."
-                    ),
+                    ui.p("The ZIP contains separate cluster-level and cell-level CSV files."),
                     ui.download_button(
                         "download_annotations",
                         "Download annotation ZIP",
@@ -471,9 +586,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     marker_error = reactive.Value[str | None](None)
     enrichment_result = reactive.Value[EnrichmentResult | None](None)
     enrichment_error = reactive.Value[str | None](None)
-    enrichment_client = EnrichrClient(
-        timeout_seconds=config.enrichment_timeout_seconds
-    )
+    ora_result = reactive.Value[AllClusterOraResult | None](None)
+    ora_error = reactive.Value[str | None](None)
+    enrichment_client = EnrichrClient(timeout_seconds=config.enrichment_timeout_seconds)
     marker_provider = CsvMarkerProvider(config.marker_catalog_path)
     reference_provider = LocalReferenceProvider(config.reference_root)
     reference_adapter = PyClustifyrAdapter()
@@ -597,6 +712,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             module_score_result.set(None)
             marker_result.set(None)
             enrichment_result.set(None)
+            ora_result.set(None)
+            ora_error.set(None)
             reference_annotation_result.set(None)
             reference_annotation_error.set(None)
             reference_annotation_applied.set(False)
@@ -693,12 +810,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     def _refresh_annotation_table(current: Workspace) -> None:
         for index, record in enumerate(current.annotations.records()):
-            ui.update_text(
-                f"annotation_cell_{index}", value=record.annotation, session=session
-            )
-            ui.update_text(
-                f"notes_cell_{index}", value=record.notes or "", session=session
-            )
+            ui.update_text(f"annotation_cell_{index}", value=record.annotation, session=session)
+            ui.update_text(f"notes_cell_{index}", value=record.notes or "", session=session)
 
     @reactive.effect
     def autosave_annotation_table() -> None:
@@ -807,21 +920,77 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         ]
         return pd.DataFrame(rows, columns=["Workspace component", "Detected values"])
 
+    registered_feature_plots: set[int] = set()
+
+    def feature_annotation_overlays(
+        current: Workspace, coordinates: np.ndarray
+    ) -> tuple[tuple[float, float, str], ...]:
+        assert current.cluster_column is not None
+        groups: dict[str, list[int]] = {}
+        labels: dict[str, str] = {}
+        for index, raw_cluster in enumerate(current.adata.obs[current.cluster_column].tolist()):
+            record = current.annotations.get(raw_cluster)
+            cluster_id = record.cluster_id.serialized
+            groups.setdefault(cluster_id, []).append(index)
+            labels[cluster_id] = record.annotation
+        return tuple(
+            (
+                float(np.median(coordinates[indices, 0])),
+                float(np.median(coordinates[indices, 1])),
+                labels[cluster_id],
+            )
+            for cluster_id, indices in groups.items()
+            if labels[cluster_id]
+        )
+
+    def register_feature_plot(index: int) -> None:
+        if index in registered_feature_plots:
+            return
+
+        @output(id=f"feature_gene_plot_{index}")
+        @render_plotly
+        def feature_gene_plot() -> Any:
+            current = workspace.get()
+            result = feature_result.get()
+            req(
+                current is not None
+                and configured.get()
+                and result is not None
+                and index < len(result.values.columns)
+            )
+            assert current is not None and result is not None
+            assert current.embedding_key is not None
+            gene = str(result.values.columns[index])
+            coordinates = np.asarray(current.adata.obsm[current.embedding_key])
+            annotations: tuple[tuple[float, float, str], ...] = ()
+            if bool(input.feature_show_annotations()):
+                revision.get()
+                annotations = feature_annotation_overlays(current, coordinates)
+            return feature_gene_figure(
+                coordinates,
+                current.adata.obs_names.astype(str).tolist(),
+                gene,
+                result.values[gene].to_numpy(),
+                annotations,
+            )
+
+        registered_feature_plots.add(index)
+
     @reactive.effect
-    @reactive.event(input.run_feature)
-    def run_feature_plot() -> None:
+    def update_feature_plots() -> None:
         current = workspace.get()
         req(current is not None and configured.get())
         assert current is not None
         feature_error.set(None)
         try:
-            genes = parse_gene_list(str(input.feature_genes()), limit=6)
+            genes = parse_gene_list(str(input.feature_genes()), limit=None)
             result = extract_expression(current.adata, current.expression_source, genes)
+            for index in range(len(result.values.columns)):
+                register_feature_plot(index)
             feature_result.set(result)
         except Exception as exc:
             feature_result.set(None)
             feature_error.set(str(exc))
-            ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @output
     @render.ui
@@ -831,7 +1000,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if error:
             return ui.div(error, class_="alert alert-danger")
         if result is None:
-            return ui.p("Configure a workspace, enter genes, and run the plot.")
+            return ui.p("Configure a workspace and enter one or more genes.")
         missing = ", ".join((*result.report.missing, *result.report.ambiguous))
         if missing:
             return ui.div(f"Not plotted: {missing}", class_="alert alert-warning")
@@ -845,22 +1014,20 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = feature_result.get()
         if result is None:
             return ui.div()
-        height = max(520, 500 * len(result.values.columns))
-        return output_widget("feature_plot", width="100%", height=f"{height}px")
-
-    @output
-    @render_plotly
-    def feature_plot() -> Any:
-        current = workspace.get()
-        result = feature_result.get()
-        req(current is not None and configured.get() and result is not None)
-        assert current is not None and result is not None and current.embedding_key is not None
-        coordinates = np.asarray(current.adata.obsm[current.embedding_key])
-        return feature_figure(coordinates, current.adata.obs_names.astype(str).tolist(), result)
+        return ui.div(
+            *(
+                ui.card(
+                    ui.card_header(str(gene)),
+                    output_widget(f"feature_gene_plot_{index}", width="100%", height="520px"),
+                    fill=False,
+                )
+                for index, gene in enumerate(result.values.columns)
+            ),
+            class_="cb-feature-stack",
+        )
 
     @reactive.effect
-    @reactive.event(input.run_dotplot)
-    def run_dot_plot() -> None:
+    def update_dot_plot() -> None:
         current = workspace.get()
         req(current is not None and configured.get() and current.cluster_column is not None)
         assert current is not None and current.cluster_column is not None
@@ -877,7 +1044,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         except Exception as exc:
             dotplot_result.set(None)
             dotplot_error.set(str(exc))
-            ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @output
     @render.ui
@@ -887,7 +1053,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if error:
             return ui.div(error, class_="alert alert-danger")
         if result is None:
-            return ui.p("Configure a workspace, enter a gene panel, and run the plot.")
+            return ui.p("Configure a workspace and enter a gene panel.")
         missing = ", ".join((*result.report.missing, *result.report.ambiguous))
         if missing:
             return ui.div(f"Not plotted: {missing}", class_="alert alert-warning")
@@ -1014,9 +1180,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         marker_set = loaded_marker_set.get()
         req(marker_set is not None)
         assert marker_set is not None
-        genes = [
-            record.gene for record in marker_set.records if record.direction == "positive"
-        ]
+        genes = [record.gene for record in marker_set.records if record.direction == "positive"]
         return ", ".join(genes)
 
     @reactive.effect
@@ -1053,9 +1217,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     def validate_local_reference() -> None:
         reference_resource_error.set(None)
         try:
-            loaded_reference.set(
-                reference_provider.load_reference(str(input.reference_id()))
-            )
+            loaded_reference.set(reference_provider.load_reference(str(input.reference_id())))
         except Exception as exc:
             loaded_reference.set(None)
             reference_resource_error.set(str(exc))
@@ -1145,9 +1307,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         with ui.Progress(min=0, max=1, session=session) as progress:
             progress.set(0.15, message="Validating reference and gene overlap")
             try:
-                reference = reference_provider.load_reference(
-                    str(input.annotation_reference_id())
-                )
+                reference = reference_provider.load_reference(str(input.annotation_reference_id()))
                 parameters = ReferenceAnnotationParameters(
                     compute_method=str(input.reference_method()),
                     minimum_gene_overlap=int(input.reference_min_overlap()),
@@ -1179,9 +1339,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if error:
             return ui.div(error, class_="alert alert-danger")
         if result is None:
-            return ui.p(
-                "Configure a workspace, select a reference, and run annotation."
-            )
+            return ui.p("Configure a workspace, select a reference, and run annotation.")
         status = (
             "Predictions applied to current annotations."
             if reference_annotation_applied.get()
@@ -1200,9 +1358,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.p(status),
             warnings,
             class_=(
-                "alert alert-success"
-                if reference_annotation_applied.get()
-                else "alert alert-info"
+                "alert alert-success" if reference_annotation_applied.get() else "alert alert-info"
             ),
         )
 
@@ -1225,12 +1381,42 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     @output
+    @render.ui
+    def reference_correlation_container() -> ui.TagChild:
+        result = reference_annotation_result.get()
+        if result is None:
+            return ui.div()
+        height = reference_correlation_height(len(result.correlations.index))
+        return ui.div(
+            output_widget("reference_correlation_plot", width="100%", height=f"{height}px"),
+            class_="cb-reference-heatmap-frame",
+            style=f"height:{height}px; min-height:{height}px;",
+        )
+
+    @output
     @render_plotly
     def reference_correlation_plot() -> Any:
         result = reference_annotation_result.get()
         req(result is not None)
         assert result is not None
         return reference_correlation_figure(result)
+
+    @output
+    @render.data_frame
+    def reference_correlation_table() -> pd.DataFrame:
+        result = reference_annotation_result.get()
+        req(result is not None)
+        assert result is not None
+        display_by_id = {
+            prediction.cluster_id: prediction.cluster_display for prediction in result.predictions
+        }
+        table = result.correlations.copy().round(4)
+        table.insert(
+            0,
+            "Source cluster",
+            [display_by_id.get(str(cluster_id), str(cluster_id)) for cluster_id in table.index],
+        )
+        return table.reset_index(drop=True)
 
     @reactive.effect
     @reactive.event(input.apply_reference_predictions)
@@ -1257,15 +1443,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             )
         except Exception as exc:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
-
-    @reactive.effect
-    @reactive.event(input.discard_reference_predictions)
-    def discard_reference_predictions() -> None:
-        req(reference_annotation_result.get() is not None)
-        reference_annotation_result.set(None)
-        reference_annotation_error.set(None)
-        reference_annotation_applied.set(False)
-        ui.notification_show("Reference preview discarded", type="message", session=session)
 
     @reactive.effect
     @reactive.event(input.module_preset, ignore_init=True)
@@ -1329,6 +1506,14 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     @output
+    @render_plotly
+    def module_violin_plot() -> Any:
+        result = module_score_result.get()
+        req(result is not None)
+        assert result is not None
+        return module_score_violin_figure(result)
+
+    @output
     @render.data_frame
     def module_summary() -> pd.DataFrame:
         result = module_score_result.get()
@@ -1359,6 +1544,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 str(input.marker_cluster()),
                 top_n=int(input.marker_top_n()),
                 min_fraction=float(input.marker_min_fraction()),
+                min_log_fold_change=float(input.marker_min_logfc()),
             )
             marker_result.set(result)
             enrichment_result.set(None)
@@ -1394,7 +1580,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "gene",
                 "score",
                 "p_adjusted",
-                "mean_difference",
+                "log_fold_change",
                 "fraction_selected",
                 "fraction_rest",
             ]
@@ -1405,10 +1591,23 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "gene": "Gene",
                 "score": "Welch score",
                 "p_adjusted": "Adjusted p-value",
-                "mean_difference": "Mean difference",
+                "log_fold_change": "logFC",
                 "fraction_selected": "Fraction selected",
                 "fraction_rest": "Fraction rest",
             }
+        )
+
+    @output
+    @render.ui
+    def marker_heatmap_container() -> ui.TagChild:
+        result = marker_result.get()
+        if result is None:
+            return ui.div()
+        height = marker_heatmap_height(len(result.heatmap.index))
+        return ui.div(
+            output_widget("marker_heatmap", width="100%", height=f"{height}px"),
+            class_="cb-marker-heatmap-frame",
+            style=f"height:{height}px; min-height:{height}px;",
         )
 
     @output
@@ -1420,7 +1619,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return marker_heatmap_figure(result)
 
     @reactive.effect
-    @reactive.event(input.run_enrichment)
+    @reactive.event(input.run_marker_enrichment)
     def run_go_enrichment() -> None:
         markers = marker_result.get()
         req(markers is not None)
@@ -1441,9 +1640,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 enrichment_error.set(str(exc))
                 ui.notification_show(str(exc), type="error", duration=10, session=session)
 
-    @output
-    @render.ui
-    def enrichment_feedback() -> ui.TagChild:
+    def _enrichment_feedback_content() -> ui.TagChild:
         error = enrichment_error.get()
         result = enrichment_result.get()
         if error:
@@ -1457,16 +1654,19 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     @output
+    @render.ui
+    def marker_enrichment_feedback() -> ui.TagChild:
+        return _enrichment_feedback_content()
+
+    @output
     @render_plotly
-    def enrichment_plot() -> Any:
+    def marker_enrichment_plot() -> Any:
         result = enrichment_result.get()
         req(result is not None)
         assert result is not None
-        return enrichment_figure(result, top_n=int(input.enrichment_top_n()))
+        return enrichment_figure(result, top_n=int(input.marker_enrichment_top_n()))
 
-    @output
-    @render.data_frame
-    def enrichment_table() -> pd.DataFrame:
+    def _enrichment_table_frame() -> pd.DataFrame:
         result = enrichment_result.get()
         req(result is not None)
         assert result is not None
@@ -1484,6 +1684,193 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             columns={
                 "rank": "Rank",
                 "term": "GO Biological Process",
+                "adjusted_p_value": "Adjusted p-value",
+                "odds_ratio": "Odds ratio",
+                "combined_score": "Combined score",
+                "overlap_genes": "Overlapping genes",
+            }
+        )
+
+    @output
+    @render.data_frame
+    def marker_enrichment_table() -> pd.DataFrame:
+        return _enrichment_table_frame()
+
+    @output
+    @render.ui
+    def marker_enrichment_table_container() -> ui.TagChild:
+        result = enrichment_result.get()
+        if result is None:
+            return ui.p("Run enrichment to display the enriched-term table here.")
+        return ui.TagList(
+            ui.p(f"Showing all {len(result.values)} returned enriched terms."),
+            ui.output_data_frame("marker_enrichment_table"),
+        )
+
+    @reactive.effect
+    @reactive.event(input.run_ora)
+    def run_all_cluster_ora() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get() and current.cluster_column is not None)
+        assert current is not None and current.cluster_column is not None
+        ora_error.set(None)
+        ora_result.set(None)
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            try:
+                progress.set(0.05, message="Ranking markers for every source cluster")
+                markers = rank_all_markers(
+                    current.adata,
+                    current.expression_source,
+                    current.cluster_column,
+                    top_n_per_cluster=int(input.ora_marker_top_n()),
+                    min_fraction=float(input.ora_min_fraction()),
+                    min_log_fold_change=float(input.ora_min_logfc()),
+                )
+                library = str(input.ora_library())
+                client = EnrichrClient(
+                    library=library,
+                    timeout_seconds=config.enrichment_timeout_seconds,
+                )
+                grouped = list(markers.values.groupby("cluster_id", sort=False))
+                frames: list[pd.DataFrame] = []
+                failures = list(markers.failures)
+                for index, (cluster_id, cluster_markers) in enumerate(grouped, start=1):
+                    cluster_display = str(cluster_markers.iloc[0]["cluster"])
+                    progress.set(
+                        0.1 + 0.85 * (index - 1) / len(grouped),
+                        message=f"Running ORA for cluster {cluster_display}",
+                        detail=f"{index} of {len(grouped)} clusters",
+                    )
+                    genes = tuple(cluster_markers["gene"].astype(str))
+                    try:
+                        enrichment = client.enrich(
+                            genes,
+                            description=(
+                                f"ClustBuster cluster {cluster_display} all-cluster markers"
+                            ),
+                        )
+                    except Exception as exc:
+                        failures.append(f"Cluster {cluster_display}: {exc}")
+                        continue
+                    values = enrichment.values.copy()
+                    values.insert(0, "cluster_id", str(cluster_id))
+                    values.insert(1, "cluster", cluster_display)
+                    frames.append(values)
+                if not frames:
+                    raise EnrichmentError(
+                        "ORA did not return pathway results for any source cluster"
+                    )
+                combined = pd.concat(frames, ignore_index=True)
+                ora_result.set(
+                    AllClusterOraResult(
+                        library=library,
+                        source="Enrichr",
+                        markers=markers.values,
+                        values=combined,
+                        failures=tuple(failures),
+                    )
+                )
+                progress.set(1, message="All-cluster ORA complete")
+            except Exception as exc:
+                ora_error.set(str(exc))
+                logger.exception("All-cluster ORA failed")
+                ui.notification_show(str(exc), type="error", duration=10, session=session)
+
+    @output
+    @render.ui
+    def ora_feedback() -> ui.TagChild:
+        error = ora_error.get()
+        result = ora_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, choose a pathway library, and run all-cluster ORA.")
+        cluster_count = result.values["cluster_id"].nunique()
+        warning_list = (
+            ui.tags.ul(*(ui.tags.li(item) for item in result.failures))
+            if result.failures
+            else ui.p("All source clusters completed successfully.")
+        )
+        return ui.div(
+            ui.strong(
+                f"{cluster_count} clusters · {len(result.markers)} markers · "
+                f"{result.values['term'].nunique()} pathways"
+            ),
+            warning_list,
+            class_="alert alert-warning" if result.failures else "alert alert-success",
+        )
+
+    @output
+    @render.ui
+    def ora_heatmap_container() -> ui.TagChild:
+        result = ora_result.get()
+        if result is None:
+            return ui.div()
+        pathway_count = min(int(input.ora_pathway_top_n()), result.values["term"].nunique())
+        height = ora_heatmap_height(pathway_count)
+        return ui.div(
+            output_widget("ora_heatmap", width="100%", height=f"{height}px"),
+            class_="cb-ora-heatmap-frame",
+            style=f"height:{height}px; min-height:{height}px;",
+        )
+
+    @output
+    @render_plotly
+    def ora_heatmap() -> Any:
+        result = ora_result.get()
+        req(result is not None)
+        assert result is not None
+        return ora_heatmap_figure(result, top_n_pathways=int(input.ora_pathway_top_n()))
+
+    @output
+    @render.data_frame
+    def ora_marker_table() -> pd.DataFrame:
+        result = ora_result.get()
+        req(result is not None)
+        assert result is not None
+        return result.markers[
+            [
+                "cluster",
+                "rank",
+                "gene",
+                "log_fold_change",
+                "p_adjusted",
+                "fraction_selected",
+                "fraction_rest",
+            ]
+        ].rename(
+            columns={
+                "cluster": "Source cluster",
+                "rank": "Rank",
+                "gene": "Gene",
+                "log_fold_change": "logFC",
+                "p_adjusted": "Adjusted p-value",
+                "fraction_selected": "Fraction selected",
+                "fraction_rest": "Fraction rest",
+            }
+        )
+
+    @output
+    @render.data_frame
+    def ora_table() -> pd.DataFrame:
+        result = ora_result.get()
+        req(result is not None)
+        assert result is not None
+        return result.values[
+            [
+                "cluster",
+                "rank",
+                "term",
+                "adjusted_p_value",
+                "odds_ratio",
+                "combined_score",
+                "overlap_genes",
+            ]
+        ].rename(
+            columns={
+                "cluster": "Source cluster",
+                "rank": "Rank",
+                "term": "Pathway",
                 "adjusted_p_value": "Adjusted p-value",
                 "odds_ratio": "Odds ratio",
                 "combined_score": "Combined score",
@@ -1519,9 +1906,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current = workspace.get()
         req(current is not None and configured.get())
         assert current is not None
-        result = export_service.export_cluster_annotations_csv(
-            current, session_files.exports
-        )
+        result = export_service.export_cluster_annotations_csv(current, session_files.exports)
         return str(result.artifacts[0].path)
 
     @output

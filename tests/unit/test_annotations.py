@@ -88,9 +88,7 @@ def test_previewed_predictions_apply_atomically_with_provenance() -> None:
         store.apply_previewed(predictions, source="pyclustifyr", reference_id="ref-v1")
     assert store.annotation_for("a") == "a"
 
-    applied = store.apply_previewed(
-        predictions[:1], source="pyclustifyr", reference_id="ref-v1"
-    )
+    applied = store.apply_previewed(predictions[:1], source="pyclustifyr", reference_id="ref-v1")
     assert applied[0].annotation == "T cell"
     assert applied[0].source == "pyclustifyr"
     assert applied[0].reference_id == "ref-v1"
@@ -193,6 +191,4 @@ def test_table_edits_are_atomic_and_note_only_edits_keep_provenance() -> None:
     assert store.annotation_for("b") == "b"
 
     with pytest.raises(ValueError, match="must not be empty"):
-        store.apply_table_edits(
-            [(records[0].cluster_id.serialized, " ", None)]
-        )
+        store.apply_table_edits([(records[0].cluster_id.serialized, " ", None)])

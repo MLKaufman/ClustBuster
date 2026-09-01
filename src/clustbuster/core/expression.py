@@ -37,12 +37,12 @@ class DotPlotResult:
     report: GeneMatchReport
 
 
-def parse_gene_list(text: str, *, limit: int = 24) -> tuple[str, ...]:
+def parse_gene_list(text: str, *, limit: int | None = 24) -> tuple[str, ...]:
     tokens = [token.strip() for token in text.replace(",", " ").split() if token.strip()]
     unique = tuple(dict.fromkeys(tokens))
     if not unique:
         raise GeneMatchError("Enter at least one gene symbol")
-    if len(unique) > limit:
+    if limit is not None and len(unique) > limit:
         raise GeneMatchError(f"Gene panels are limited to {limit} genes")
     return unique
 
