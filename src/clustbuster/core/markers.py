@@ -33,6 +33,7 @@ class AllMarkerResult:
     method: str
     values: pd.DataFrame
     failures: tuple[str, ...]
+    top_n_per_cluster: int
 
 
 def _group_statistics(matrix: Any, mask: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -226,4 +227,5 @@ def rank_all_markers(
         method="Welch t-test (one-vs-rest)",
         values=pd.concat(frames, ignore_index=True),
         failures=tuple(failures),
+        top_n_per_cluster=top_n_per_cluster,
     )

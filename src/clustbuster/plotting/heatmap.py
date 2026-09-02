@@ -63,30 +63,10 @@ def all_marker_heatmap_figure(
 
     figure_height = max(6.4, all_marker_heatmap_height(len(genes)) / 100)
     figure = Figure(figsize=(12, figure_height))
-    grid = figure.add_gridspec(2, 1, height_ratios=(0.35, max(4, len(genes))), hspace=0.04)
-    cluster_axes = figure.add_subplot(grid[0])
-    heatmap_axes = figure.add_subplot(grid[1])
-
-    group_codes = np.concatenate(
-        [np.full(len(indices), index) for index, indices in enumerate(cell_groups)]
-    )
-    cluster_axes.imshow(
-        group_codes[None, :],
-        aspect="auto",
-        interpolation="nearest",
-        cmap="tab20",
-        vmin=-0.5,
-        vmax=max(len(cluster_ids) - 0.5, 0.5),
-    )
+    heatmap_axes = figure.subplots()
     boundaries = np.cumsum([len(indices) for indices in cell_groups])
     starts = np.concatenate(([0], boundaries[:-1]))
     centers = (starts + boundaries - 1) / 2
-    cluster_axes.set_xticks(centers, labels=cluster_labels)
-    cluster_axes.xaxis.tick_top()
-    cluster_axes.tick_params(axis="x", length=0, pad=4)
-    cluster_axes.set_yticks([])
-    cluster_axes.set_title("Top 10 markers per source cluster", pad=26)
-
     image = heatmap_axes.imshow(
         scaled,
         aspect="auto",
@@ -97,13 +77,17 @@ def all_marker_heatmap_figure(
         rasterized=True,
     )
     heatmap_axes.set_yticks(np.arange(len(genes)), labels=genes, fontsize=8)
-    heatmap_axes.set_xticks([])
+    heatmap_axes.set_xticks(centers, labels=cluster_labels)
+    heatmap_axes.xaxis.tick_top()
+    heatmap_axes.tick_params(axis="x", length=0, pad=5)
     heatmap_axes.set_ylabel("Marker gene")
+    heatmap_axes.set_title(
+        f"Top {result.top_n_per_cluster} markers per source cluster", pad=28
+    )
     for boundary in boundaries[:-1]:
-        cluster_axes.axvline(boundary - 0.5, color="white", linewidth=1.2)
         heatmap_axes.axvline(boundary - 0.5, color="#263746", linewidth=0.65, alpha=0.8)
     figure.colorbar(image, ax=heatmap_axes, pad=0.012, label="Scaled expression")
-    figure.subplots_adjust(left=0.13, right=0.92, bottom=0.04, top=0.93)
+    figure.subplots_adjust(left=0.13, right=0.92, bottom=0.04, top=0.9)
     return figure
 
 

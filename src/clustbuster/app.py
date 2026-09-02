@@ -412,6 +412,13 @@ app_ui = ui.page_fillable(
                     ui.card(
                         ui.layout_columns(
                             ui.input_numeric(
+                                "all_marker_top_n",
+                                "Genes per cluster",
+                                value=10,
+                                min=1,
+                                max=100,
+                            ),
+                            ui.input_numeric(
                                 "all_marker_min_fraction",
                                 "Minimum expressing fraction",
                                 value=0.1,
@@ -431,11 +438,11 @@ app_ui = ui.page_fillable(
                                 "Find all markers",
                                 class_="btn-primary",
                             ),
-                            col_widths=(4, 4, 4),
+                            col_widths=(3, 3, 3, 3),
                         ),
                         ui.help_text(
                             "Ranks every source cluster one versus the remaining cells and "
-                            "keeps the top 10 positive marker genes per cluster."
+                            "keeps the requested number of positive marker genes per cluster."
                         ),
                         fill=False,
                     ),
@@ -447,6 +454,73 @@ app_ui = ui.page_fillable(
                         fill=False,
                     ),
                     class_="cb-all-markers-stack",
+                ),
+            ),
+            ui.nav_panel(
+                "ORA",
+                ui.div(
+                    ui.card(
+                        ui.layout_columns(
+                            ui.input_select(
+                                "ora_library",
+                                "Pathway library",
+                                _ORA_LIBRARIES,
+                                selected=DEFAULT_LIBRARY,
+                            ),
+                            ui.input_numeric(
+                                "ora_marker_top_n",
+                                "Markers per cluster",
+                                value=25,
+                                min=2,
+                                max=100,
+                            ),
+                            ui.input_numeric(
+                                "ora_min_fraction",
+                                "Minimum expressing fraction",
+                                value=0.1,
+                                min=0,
+                                max=1,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "ora_min_logfc",
+                                "Minimum logFC",
+                                value=0.25,
+                                min=0,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "ora_pathway_top_n",
+                                "Pathways to display",
+                                value=30,
+                                min=5,
+                                max=100,
+                            ),
+                            ui.input_action_button(
+                                "run_ora", "Run all-cluster ORA", class_="btn-primary"
+                            ),
+                            col_widths=(3, 2, 2, 2, 2, 3),
+                        ),
+                        ui.help_text(
+                            "Ranks positive markers one cluster versus all remaining cells, "
+                            "then runs over-representation analysis separately for every source "
+                            "cluster. Only marker gene symbols are sent to Enrichr."
+                        ),
+                        fill=False,
+                    ),
+                    ui.output_ui("ora_feedback"),
+                    ui.output_ui("ora_heatmap_container"),
+                    ui.card(
+                        ui.card_header("All-cluster markers"),
+                        ui.output_data_frame("ora_marker_table"),
+                        fill=False,
+                    ),
+                    ui.card(
+                        ui.card_header("Cluster pathway results"),
+                        ui.output_data_frame("ora_table"),
+                        fill=False,
+                    ),
+                    class_="cb-ora-stack",
                 ),
             ),
             ui.nav_panel(
@@ -518,73 +592,6 @@ app_ui = ui.page_fillable(
                         fill=False,
                     ),
                     class_="cb-refmats-stack",
-                ),
-            ),
-            ui.nav_panel(
-                "ORA",
-                ui.div(
-                    ui.card(
-                        ui.layout_columns(
-                            ui.input_select(
-                                "ora_library",
-                                "Pathway library",
-                                _ORA_LIBRARIES,
-                                selected=DEFAULT_LIBRARY,
-                            ),
-                            ui.input_numeric(
-                                "ora_marker_top_n",
-                                "Markers per cluster",
-                                value=25,
-                                min=2,
-                                max=100,
-                            ),
-                            ui.input_numeric(
-                                "ora_min_fraction",
-                                "Minimum expressing fraction",
-                                value=0.1,
-                                min=0,
-                                max=1,
-                                step=0.05,
-                            ),
-                            ui.input_numeric(
-                                "ora_min_logfc",
-                                "Minimum logFC",
-                                value=0.25,
-                                min=0,
-                                step=0.05,
-                            ),
-                            ui.input_numeric(
-                                "ora_pathway_top_n",
-                                "Pathways to display",
-                                value=30,
-                                min=5,
-                                max=100,
-                            ),
-                            ui.input_action_button(
-                                "run_ora", "Run all-cluster ORA", class_="btn-primary"
-                            ),
-                            col_widths=(3, 2, 2, 2, 2, 3),
-                        ),
-                        ui.help_text(
-                            "Ranks positive markers one cluster versus all remaining cells, "
-                            "then runs over-representation analysis separately for every source "
-                            "cluster. Only marker gene symbols are sent to Enrichr."
-                        ),
-                        fill=False,
-                    ),
-                    ui.output_ui("ora_feedback"),
-                    ui.output_ui("ora_heatmap_container"),
-                    ui.card(
-                        ui.card_header("All-cluster markers"),
-                        ui.output_data_frame("ora_marker_table"),
-                        fill=False,
-                    ),
-                    ui.card(
-                        ui.card_header("Cluster pathway results"),
-                        ui.output_data_frame("ora_table"),
-                        fill=False,
-                    ),
-                    class_="cb-ora-stack",
                 ),
             ),
             ui.nav_panel(
@@ -1763,7 +1770,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     current.adata,
                     current.expression_source,
                     current.cluster_column,
-                    top_n_per_cluster=10,
+                    top_n_per_cluster=int(input.all_marker_top_n()),
                     min_fraction=float(input.all_marker_min_fraction()),
                     min_log_fold_change=float(input.all_marker_min_logfc()),
                 )

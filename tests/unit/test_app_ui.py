@@ -68,6 +68,8 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     assert html.index('data-value="Top Markers"') < html.index('data-value="MarkerCodex"')
     assert html.index('data-value="Top Markers"') < html.index('data-value="All Markers"')
     assert html.index('data-value="All Markers"') < html.index('data-value="MarkerCodex"')
+    assert html.index('data-value="All Markers"') < html.index('data-value="ORA"')
+    assert html.index('data-value="ORA"') < html.index('data-value="MarkerCodex"')
 
 
 def test_feature_and_dot_plots_update_without_run_buttons() -> None:
@@ -112,7 +114,8 @@ def test_all_markers_has_fixed_top_ten_heatmap_and_complete_table() -> None:
 
     assert 'id="run_all_markers"' in html
     assert "Find all markers" in html
-    assert "top 10 positive marker genes per cluster" in html
+    assert 'id="all_marker_top_n"' in html
+    assert "Genes per cluster" in html
     assert 'id="all_marker_heatmap_container"' in html
     assert 'id="all_marker_table"' in html
     assert 'class="cb-all-markers-stack"' in html

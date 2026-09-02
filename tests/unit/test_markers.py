@@ -109,7 +109,7 @@ def test_all_marker_heatmap_groups_cells_and_labels_marker_genes() -> None:
     )
     figure = all_marker_heatmap_figure(adata, ExpressionSource.x(), "cluster", result)
 
-    assert figure.axes[0].get_title() == "Top 10 markers per source cluster"
+    assert figure.axes[0].get_title() == "Top 1 markers per source cluster"
     assert [tick.get_text() for tick in figure.axes[0].get_xticklabels()] == ["a", "b"]
-    assert [tick.get_text() for tick in figure.axes[1].get_yticklabels()] == ["CD3D", "LYZ"]
-    assert figure.axes[1].images[0].get_rasterized() is True
+    assert [tick.get_text() for tick in figure.axes[0].get_yticklabels()] == ["CD3D", "LYZ"]
+    assert figure.axes[0].images[0].get_rasterized() is True
