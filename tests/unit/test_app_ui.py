@@ -58,6 +58,7 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     assert 'data-value="MarkerCodex"' in html
     assert 'data-value="Refmats"' in html
     assert 'data-value="Top Markers"' in html
+    assert 'data-value="All Markers"' in html
     assert 'data-value="ORA"' in html
     assert 'data-value="Enrichment"' not in html
     assert 'data-value="Resources"' not in html
@@ -65,6 +66,8 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     assert 'data-value="Markers &amp; heatmap"' not in html
     assert html.index('data-value="Module scores"') < html.index('data-value="MarkerCodex"')
     assert html.index('data-value="Top Markers"') < html.index('data-value="MarkerCodex"')
+    assert html.index('data-value="Top Markers"') < html.index('data-value="All Markers"')
+    assert html.index('data-value="All Markers"') < html.index('data-value="MarkerCodex"')
 
 
 def test_feature_and_dot_plots_update_without_run_buttons() -> None:
@@ -102,6 +105,17 @@ def test_top_markers_has_logfc_and_embedded_enrichment_controls() -> None:
     assert 'class="cb-top-markers-stack"' in html
     assert "#marker_heatmap_container { display:block" in html
     assert html.index('id="marker_heatmap_container"') < html.index('id="run_marker_enrichment"')
+
+
+def test_all_markers_has_fixed_top_ten_heatmap_and_complete_table() -> None:
+    html = _rendered_html()
+
+    assert 'id="run_all_markers"' in html
+    assert "Find all markers" in html
+    assert "top 10 positive marker genes per cluster" in html
+    assert 'id="all_marker_heatmap_container"' in html
+    assert 'id="all_marker_table"' in html
+    assert 'class="cb-all-markers-stack"' in html
 
 
 def test_ora_tab_runs_all_cluster_markers_and_pathway_heatmap() -> None:

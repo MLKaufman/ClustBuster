@@ -4,14 +4,107 @@ from __future__ import annotations
 
 import numpy as np
 import plotly.graph_objects as go
+from anndata import AnnData
+from matplotlib.figure import Figure
 from plotly.subplots import make_subplots
+from scipy import sparse
 
-from clustbuster.core.markers import MarkerResult
+from clustbuster.core.annotations import ClusterIdentifier
+from clustbuster.core.expression import expression_matrix
+from clustbuster.core.markers import AllMarkerResult, MarkerResult
+from clustbuster.models import ExpressionSource
 from clustbuster.plotting.hierarchy import cluster_hierarchy, standardize_columns
 
 
 def marker_heatmap_height(cluster_count: int) -> int:
     return min(860, max(560, 24 * cluster_count + 220))
+
+
+def all_marker_heatmap_height(gene_count: int) -> int:
+    return min(1600, max(640, 18 * gene_count + 220))
+
+
+def all_marker_heatmap_figure(
+    adata: AnnData,
+    source: ExpressionSource,
+    cluster_column: str,
+    result: AllMarkerResult,
+) -> Figure:
+    """Build a static Seurat-style gene-by-cell heatmap grouped by source cluster."""
+
+    marker_rows = result.values.drop_duplicates("gene", keep="first")
+    genes = marker_rows["gene"].astype(str).tolist()
+    matrix, names = expression_matrix(adata, source)
+    feature_indices = names.get_indexer(genes)
+    if (feature_indices < 0).any():
+        raise ValueError("All-marker heatmap genes are unavailable in the expression source")
+
+    raw_clusters = adata.obs[cluster_column].tolist()
+    serialized = np.asarray(
+        [ClusterIdentifier.from_value(value).serialized for value in raw_clusters], dtype=object
+    )
+    cluster_rows = result.values.drop_duplicates("cluster_id", keep="first")
+    cluster_ids = cluster_rows["cluster_id"].astype(str).tolist()
+    cluster_labels = cluster_rows["cluster"].astype(str).tolist()
+    cell_groups = [np.flatnonzero(serialized == cluster_id) for cluster_id in cluster_ids]
+    cell_order = np.concatenate(cell_groups)
+    selected = matrix[cell_order, :][:, feature_indices]
+    dense = selected.toarray() if sparse.issparse(selected) else np.asarray(selected)
+    gene_by_cell = np.asarray(dense, dtype=float).T
+    means = gene_by_cell.mean(axis=1, keepdims=True)
+    deviations = gene_by_cell.std(axis=1, keepdims=True)
+    scaled = np.divide(
+        gene_by_cell - means,
+        deviations,
+        out=np.zeros_like(gene_by_cell),
+        where=deviations > 0,
+    )
+    scaled = np.clip(scaled, -2.5, 2.5)
+
+    figure_height = max(6.4, all_marker_heatmap_height(len(genes)) / 100)
+    figure = Figure(figsize=(12, figure_height))
+    grid = figure.add_gridspec(2, 1, height_ratios=(0.35, max(4, len(genes))), hspace=0.04)
+    cluster_axes = figure.add_subplot(grid[0])
+    heatmap_axes = figure.add_subplot(grid[1])
+
+    group_codes = np.concatenate(
+        [np.full(len(indices), index) for index, indices in enumerate(cell_groups)]
+    )
+    cluster_axes.imshow(
+        group_codes[None, :],
+        aspect="auto",
+        interpolation="nearest",
+        cmap="tab20",
+        vmin=-0.5,
+        vmax=max(len(cluster_ids) - 0.5, 0.5),
+    )
+    boundaries = np.cumsum([len(indices) for indices in cell_groups])
+    starts = np.concatenate(([0], boundaries[:-1]))
+    centers = (starts + boundaries - 1) / 2
+    cluster_axes.set_xticks(centers, labels=cluster_labels)
+    cluster_axes.xaxis.tick_top()
+    cluster_axes.tick_params(axis="x", length=0, pad=4)
+    cluster_axes.set_yticks([])
+    cluster_axes.set_title("Top 10 markers per source cluster", pad=26)
+
+    image = heatmap_axes.imshow(
+        scaled,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="RdBu_r",
+        vmin=-2.5,
+        vmax=2.5,
+        rasterized=True,
+    )
+    heatmap_axes.set_yticks(np.arange(len(genes)), labels=genes, fontsize=8)
+    heatmap_axes.set_xticks([])
+    heatmap_axes.set_ylabel("Marker gene")
+    for boundary in boundaries[:-1]:
+        cluster_axes.axvline(boundary - 0.5, color="white", linewidth=1.2)
+        heatmap_axes.axvline(boundary - 0.5, color="#263746", linewidth=0.65, alpha=0.8)
+    figure.colorbar(image, ax=heatmap_axes, pad=0.012, label="Scaled expression")
+    figure.subplots_adjust(left=0.13, right=0.92, bottom=0.04, top=0.93)
+    return figure
 
 
 def marker_heatmap_figure(result: MarkerResult) -> go.Figure:

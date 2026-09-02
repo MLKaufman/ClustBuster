@@ -38,6 +38,7 @@ def module_score_figure(
         margin={"l": 48, "r": 70, "t": 50, "b": 48},
         xaxis_title="Dimension 1",
         yaxis_title="Dimension 2",
+        yaxis={"scaleanchor": "x", "scaleratio": 1},
         dragmode="lasso",
     )
     return figure

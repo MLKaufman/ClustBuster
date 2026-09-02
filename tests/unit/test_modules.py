@@ -45,6 +45,8 @@ def test_module_score_figure_uses_webgl_and_cell_ids() -> None:
     )
     assert figure.data[0].type == "scattergl"
     assert figure.data[0].customdata[0][0] == "w"
+    assert figure.layout.yaxis.scaleanchor == "x"
+    assert figure.layout.yaxis.scaleratio == 1
 
 
 def test_module_score_violin_shows_every_cell_as_a_point() -> None:

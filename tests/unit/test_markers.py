@@ -7,7 +7,11 @@ from scipy import sparse
 from clustbuster.core.annotations import ClusterIdentifier
 from clustbuster.core.markers import MarkerAnalysisError, rank_all_markers, rank_markers
 from clustbuster.models import ExpressionSource
-from clustbuster.plotting.heatmap import marker_heatmap_figure, marker_heatmap_height
+from clustbuster.plotting.heatmap import (
+    all_marker_heatmap_figure,
+    marker_heatmap_figure,
+    marker_heatmap_height,
+)
 
 
 def _adata() -> ad.AnnData:
@@ -91,3 +95,21 @@ def test_marker_heatmap_is_standardized_and_labeled() -> None:
     assert figure.layout.yaxis3.showticklabels is True
     assert figure.layout.yaxis3.side == "left"
     assert figure.layout.height == marker_heatmap_height(len(result.heatmap.index))
+
+
+def test_all_marker_heatmap_groups_cells_and_labels_marker_genes() -> None:
+    adata = _adata()
+    result = rank_all_markers(
+        adata,
+        ExpressionSource.x(),
+        "cluster",
+        top_n_per_cluster=1,
+        min_fraction=0,
+        min_log_fold_change=0,
+    )
+    figure = all_marker_heatmap_figure(adata, ExpressionSource.x(), "cluster", result)
+
+    assert figure.axes[0].get_title() == "Top 10 markers per source cluster"
+    assert [tick.get_text() for tick in figure.axes[0].get_xticklabels()] == ["a", "b"]
+    assert [tick.get_text() for tick in figure.axes[1].get_yticklabels()] == ["CD3D", "LYZ"]
+    assert figure.axes[1].images[0].get_rasterized() is True

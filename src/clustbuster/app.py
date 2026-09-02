@@ -21,7 +21,7 @@ from clustbuster.core.expression import (
     extract_expression,
     parse_gene_list,
 )
-from clustbuster.core.markers import MarkerResult, rank_all_markers, rank_markers
+from clustbuster.core.markers import AllMarkerResult, MarkerResult, rank_all_markers, rank_markers
 from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
@@ -43,7 +43,12 @@ from clustbuster.plotting.dotplot import dotplot_figure
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.enrichment import enrichment_figure
 from clustbuster.plotting.feature import feature_gene_figure
-from clustbuster.plotting.heatmap import marker_heatmap_figure, marker_heatmap_height
+from clustbuster.plotting.heatmap import (
+    all_marker_heatmap_figure,
+    all_marker_heatmap_height,
+    marker_heatmap_figure,
+    marker_heatmap_height,
+)
 from clustbuster.plotting.module import module_score_figure, module_score_violin_figure
 from clustbuster.plotting.ora import ora_heatmap_figure, ora_heatmap_height
 from clustbuster.plotting.reference import (
@@ -119,6 +124,12 @@ def _styles() -> ui.Tag:
         .cb-top-markers-stack { display:flex; flex-direction:column; gap:1rem;
                                 width:100%; padding-bottom:1rem; }
         .cb-top-markers-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        .cb-all-markers-stack { display:flex; flex-direction:column; gap:1rem;
+                                width:100%; padding-bottom:1rem; }
+        .cb-all-markers-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        #all_marker_heatmap_container { display:block; width:100%;
+                                        flex:0 0 auto !important; }
+        .cb-all-marker-heatmap-frame { display:block; width:100%; flex:none !important; }
         #marker_heatmap_container { display:block; width:100%; flex:0 0 auto !important; }
         .cb-marker-heatmap-frame { display:block; width:100%; flex:none !important; }
         #marker_enrichment_plot { display:block; width:100%; flex:0 0 560px !important;
@@ -396,6 +407,49 @@ app_ui = ui.page_fillable(
                 ),
             ),
             ui.nav_panel(
+                "All Markers",
+                ui.div(
+                    ui.card(
+                        ui.layout_columns(
+                            ui.input_numeric(
+                                "all_marker_min_fraction",
+                                "Minimum expressing fraction",
+                                value=0.1,
+                                min=0,
+                                max=1,
+                                step=0.05,
+                            ),
+                            ui.input_numeric(
+                                "all_marker_min_logfc",
+                                "Minimum logFC",
+                                value=0.25,
+                                min=0,
+                                step=0.05,
+                            ),
+                            ui.input_action_button(
+                                "run_all_markers",
+                                "Find all markers",
+                                class_="btn-primary",
+                            ),
+                            col_widths=(4, 4, 4),
+                        ),
+                        ui.help_text(
+                            "Ranks every source cluster one versus the remaining cells and "
+                            "keeps the top 10 positive marker genes per cluster."
+                        ),
+                        fill=False,
+                    ),
+                    ui.output_ui("all_marker_feedback"),
+                    ui.output_ui("all_marker_heatmap_container"),
+                    ui.card(
+                        ui.card_header("All-cluster marker table"),
+                        ui.output_data_frame("all_marker_table"),
+                        fill=False,
+                    ),
+                    class_="cb-all-markers-stack",
+                ),
+            ),
+            ui.nav_panel(
                 "MarkerCodex",
                 ui.output_ui("provider_status"),
                 ui.card(
@@ -609,6 +663,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     configured = reactive.Value(False)
     error_message = reactive.Value[str | None](None)
     revision = reactive.Value(0)
+    configuration_revision = reactive.Value(0)
     feature_result = reactive.Value[ExpressionResult | None](None)
     feature_error = reactive.Value[str | None](None)
     dotplot_result = reactive.Value[DotPlotResult | None](None)
@@ -617,6 +672,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     module_error = reactive.Value[str | None](None)
     marker_result = reactive.Value[MarkerResult | None](None)
     marker_error = reactive.Value[str | None](None)
+    all_marker_result = reactive.Value[AllMarkerResult | None](None)
+    all_marker_error = reactive.Value[str | None](None)
     enrichment_result = reactive.Value[EnrichmentResult | None](None)
     enrichment_error = reactive.Value[str | None](None)
     ora_result = reactive.Value[AllClusterOraResult | None](None)
@@ -656,15 +713,23 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         ui.update_select("marker_cluster", choices=cluster_choices, session=session)
         configured.set(True)
         feature_result.set(None)
+        feature_error.set(None)
         dotplot_result.set(None)
+        dotplot_error.set(None)
         module_score_result.set(None)
+        module_error.set(None)
         marker_result.set(None)
+        marker_error.set(None)
+        all_marker_result.set(None)
+        all_marker_error.set(None)
         enrichment_result.set(None)
+        enrichment_error.set(None)
         ora_result.set(None)
         ora_error.set(None)
         reference_annotation_result.set(None)
         reference_annotation_error.set(None)
         reference_annotation_applied.set(False)
+        configuration_revision.set(configuration_revision.get() + 1)
         revision.set(revision.get() + 1)
 
     @reactive.effect
@@ -1037,6 +1102,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current = workspace.get()
         req(current is not None and configured.get())
         assert current is not None
+        configuration_revision.get()
         feature_error.set(None)
         try:
             genes = parse_gene_list(str(input.feature_genes()), limit=None)
@@ -1089,6 +1155,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current = workspace.get()
         req(current is not None and configured.get() and current.cluster_column is not None)
         assert current is not None and current.cluster_column is not None
+        configuration_revision.get()
         dotplot_error.set(None)
         try:
             genes = parse_gene_list(str(input.dot_genes()), limit=24)
@@ -1680,6 +1747,116 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(result is not None)
         assert result is not None
         return marker_heatmap_figure(result)
+
+    @reactive.effect
+    @reactive.event(input.run_all_markers)
+    def run_all_marker_ranking() -> None:
+        current = workspace.get()
+        req(current is not None and configured.get() and current.cluster_column is not None)
+        assert current is not None and current.cluster_column is not None
+        all_marker_error.set(None)
+        all_marker_result.set(None)
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            try:
+                progress.set(0.1, message="Ranking markers for every source cluster")
+                result = rank_all_markers(
+                    current.adata,
+                    current.expression_source,
+                    current.cluster_column,
+                    top_n_per_cluster=10,
+                    min_fraction=float(input.all_marker_min_fraction()),
+                    min_log_fold_change=float(input.all_marker_min_logfc()),
+                )
+                all_marker_result.set(result)
+                progress.set(1, message="All-cluster marker ranking complete")
+            except Exception as exc:
+                all_marker_error.set(str(exc))
+                logger.exception("All-cluster marker ranking failed")
+                ui.notification_show(str(exc), type="error", duration=10, session=session)
+
+    @output
+    @render.ui
+    def all_marker_feedback() -> ui.TagChild:
+        error = all_marker_error.get()
+        result = all_marker_result.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        if result is None:
+            return ui.p("Configure a workspace, then find markers for every source cluster.")
+        cluster_count = result.values["cluster_id"].nunique()
+        warnings = (
+            ui.tags.ul(*(ui.tags.li(item) for item in result.failures))
+            if result.failures
+            else ui.p("All source clusters completed successfully.")
+        )
+        return ui.div(
+            ui.strong(f"{cluster_count} clusters · {len(result.values)} marker records"),
+            warnings,
+            class_="alert alert-warning" if result.failures else "alert alert-success",
+        )
+
+    @output
+    @render.ui
+    def all_marker_heatmap_container() -> ui.TagChild:
+        result = all_marker_result.get()
+        if result is None:
+            return ui.div()
+        gene_count = result.values["gene"].nunique()
+        height = all_marker_heatmap_height(gene_count)
+        return ui.div(
+            ui.output_plot("all_marker_heatmap", width="100%", height=f"{height}px"),
+            class_="cb-all-marker-heatmap-frame",
+            style=f"height:{height}px; min-height:{height}px;",
+        )
+
+    @output
+    @render.plot(alt="All-cluster marker expression heatmap")
+    def all_marker_heatmap() -> Any:
+        current = workspace.get()
+        result = all_marker_result.get()
+        req(
+            current is not None
+            and configured.get()
+            and current.cluster_column is not None
+            and result is not None
+        )
+        assert current is not None and current.cluster_column is not None and result is not None
+        return all_marker_heatmap_figure(
+            current.adata,
+            current.expression_source,
+            current.cluster_column,
+            result,
+        )
+
+    @output
+    @render.data_frame
+    def all_marker_table() -> pd.DataFrame:
+        result = all_marker_result.get()
+        req(result is not None)
+        assert result is not None
+        return result.values[
+            [
+                "cluster",
+                "rank",
+                "gene",
+                "score",
+                "p_adjusted",
+                "log_fold_change",
+                "fraction_selected",
+                "fraction_rest",
+            ]
+        ].rename(
+            columns={
+                "cluster": "Source cluster",
+                "rank": "Rank",
+                "gene": "Gene",
+                "score": "Welch score",
+                "p_adjusted": "Adjusted p-value",
+                "log_fold_change": "logFC",
+                "fraction_selected": "Fraction selected",
+                "fraction_rest": "Fraction rest",
+            }
+        )
 
     @reactive.effect
     @reactive.event(input.run_marker_enrichment)
