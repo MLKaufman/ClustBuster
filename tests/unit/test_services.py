@@ -68,6 +68,35 @@ def test_workspace_configuration_initializes_annotation_state(tmp_path: Path) ->
     assert [record.annotation for record in workspace.annotations.records()] == ["0", "1"]
 
 
+def test_workspace_reconfiguration_reinitializes_annotation_state(tmp_path: Path) -> None:
+    upload_path = tmp_path / "fixture.h5ad"
+    _write_fixture(upload_path)
+    session_files = SessionFiles.create(tmp_path / "sessions")
+    imported = ImportService(max_upload_mb=10).import_upload(
+        {"name": "fixture.h5ad", "datapath": str(upload_path)}, session_files
+    )
+    workspace = workspace_from_import(imported)
+    configure_workspace(
+        workspace,
+        cluster_column="leiden",
+        embedding_key="X_umap",
+        expression_source=ExpressionSource.x(),
+    )
+    workspace.annotations.assign("0", "T cell", notes="reviewed")
+
+    configure_workspace(
+        workspace,
+        cluster_column="leiden",
+        embedding_key="X_umap",
+        expression_source=ExpressionSource.named_layer("counts"),
+    )
+
+    records = workspace.annotations.records()
+    assert [record.annotation for record in records] == ["0", "1"]
+    assert [record.notes for record in records] == [None, None]
+    assert [record.source for record in records] == ["imported", "imported"]
+
+
 def test_import_service_dispatches_enabled_seurat_upload(tmp_path: Path) -> None:
     source = Path(__file__).parents[2] / "testdata" / "so.rds"
     session_files = SessionFiles.create(tmp_path / "sessions")

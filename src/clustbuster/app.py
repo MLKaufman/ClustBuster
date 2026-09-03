@@ -856,6 +856,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 embedding_key=str(input.embedding_key()),
                 expression_source=ExpressionSource.from_label(str(input.expression_source())),
             )
+            _refresh_annotation_table(current)
             ui.notification_show("Workspace reinitialized", type="message", session=session)
         except Exception as exc:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
@@ -909,6 +910,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         current = workspace.get()
         if current is None or not configured.get():
             return ui.p("No annotation rows are available.", class_="text-muted")
+        configuration_revision.get()
         rows = [
             ui.tags.tr(
                 ui.tags.td(record.cluster_id.display),
