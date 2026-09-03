@@ -10,10 +10,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 
 from clustbuster import __version__
 from clustbuster.core.annotations import ClusterIdentifier
+from clustbuster.core.expression import expression_matrix
 from clustbuster.io.export import ExportCollisionError, ExportError
 from clustbuster.models import ExportArtifact, ExportResult, Workspace
 
@@ -109,6 +111,75 @@ class WorkspaceExportService:
         cluster_table.to_csv(artifact_path, index=False, lineterminator="\n")
         artifact = ExportArtifact(
             kind="cluster_annotation_csv",
+            path=artifact_path,
+            checksum=_checksum(artifact_path),
+            media_type="text/csv",
+        )
+        return ExportResult((artifact,))
+
+    def export_reference_matrix_csv(
+        self,
+        workspace: Workspace,
+        destination: Path,
+        *,
+        metadata_column: str | None = None,
+    ) -> ExportResult:
+        """Export mean expression by current annotation or an ``obs`` column."""
+
+        if metadata_column is None:
+            if workspace.cluster_column is None:
+                raise ExportError("Configure a cluster column before exporting a Refmat")
+            clusters = workspace.adata.obs[workspace.cluster_column].tolist()
+            groups = pd.Series(
+                workspace.annotations.materialize(clusters),
+                index=workspace.adata.obs_names,
+                dtype="object",
+            )
+            group_label = "current-annotations"
+        else:
+            if metadata_column not in workspace.adata.obs:
+                raise ExportError(f"Unknown metadata column: {metadata_column}")
+            groups = workspace.adata.obs[metadata_column]
+            group_label = _safe_stem(metadata_column)
+
+        valid = ~pd.isna(groups)
+        if not bool(valid.any()):
+            raise ExportError("The selected grouping contains no non-missing values")
+        labels = groups.loc[valid].astype(str)
+        if bool((labels.str.strip() == "").any()):
+            labels = labels.mask(labels.str.strip() == "", "<empty>")
+
+        matrix, gene_names = expression_matrix(workspace.adata, workspace.expression_source)
+        if not gene_names.is_unique:
+            raise ExportError("Refmat export requires unique feature names")
+
+        valid_indices = np.flatnonzero(valid.to_numpy())
+        ordered_labels = list(dict.fromkeys(labels.tolist()))
+        averages: dict[str, np.ndarray] = {}
+        used_output_labels = {"gene"}
+        label_values = labels.to_numpy()
+        for label in ordered_labels:
+            cell_indices = valid_indices[label_values == label]
+            selected = matrix[cell_indices, :]
+            mean = np.asarray(selected.mean(axis=0)).ravel()
+            if not np.isfinite(mean).all():
+                raise ExportError("The selected expression source contains non-finite values")
+            output_label = label
+            suffix = 1
+            while output_label in used_output_labels:
+                output_label = f"{label} [group {suffix}]"
+                suffix += 1
+            used_output_labels.add(output_label)
+            averages[output_label] = mean
+
+        table = pd.DataFrame(averages, index=gene_names.astype(str))
+        table.index.name = "gene"
+        destination.mkdir(parents=True, exist_ok=True)
+        stem = _safe_stem(workspace.source_filename)
+        artifact_path = destination / (f"{uuid4().hex}-{stem}-{group_label}-reference-matrix.csv")
+        table.to_csv(artifact_path, lineterminator="\n")
+        artifact = ExportArtifact(
+            kind="reference_matrix_csv",
             path=artifact_path,
             checksum=_checksum(artifact_path),
             media_type="text/csv",

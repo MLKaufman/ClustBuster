@@ -93,6 +93,50 @@ def test_cluster_annotation_csv_exports_current_table(tmp_path: Path) -> None:
     assert exported["notes"].iloc[0] == "reviewed"
 
 
+def test_reference_matrix_csv_groups_by_current_annotations(tmp_path: Path) -> None:
+    workspace = _workspace()
+    workspace.annotations.assign("a", "T cell")
+
+    result = WorkspaceExportService().export_reference_matrix_csv(workspace, tmp_path)
+    artifact = result.artifacts[0]
+    exported = pd.read_csv(artifact.path)
+
+    assert artifact.kind == "reference_matrix_csv"
+    assert artifact.media_type == "text/csv"
+    assert exported.columns.tolist() == ["gene", "T cell", "b"]
+    assert exported["gene"].tolist() == ["gene-1", "gene-2"]
+    np.testing.assert_allclose(exported["T cell"], [1.0, 2.0])
+    np.testing.assert_allclose(exported["b"], [4.0, 5.0])
+
+
+def test_reference_matrix_csv_groups_by_metadata_and_omits_missing_cells(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace()
+    workspace.adata.obs["sample"] = ["control", "treated", None]
+
+    result = WorkspaceExportService().export_reference_matrix_csv(
+        workspace, tmp_path, metadata_column="sample"
+    )
+    exported = pd.read_csv(result.artifacts[0].path)
+
+    assert exported.columns.tolist() == ["gene", "control", "treated"]
+    np.testing.assert_allclose(exported["control"], [0.0, 1.0])
+    np.testing.assert_allclose(exported["treated"], [2.0, 3.0])
+
+
+def test_reference_matrix_csv_keeps_gene_column_name_unique(tmp_path: Path) -> None:
+    workspace = _workspace()
+    workspace.adata.obs["label"] = ["gene", "gene [group 2]", "other"]
+
+    result = WorkspaceExportService().export_reference_matrix_csv(
+        workspace, tmp_path, metadata_column="label"
+    )
+    exported = pd.read_csv(result.artifacts[0].path)
+
+    assert exported.columns.tolist() == ["gene", "gene [group 1]", "gene [group 2]", "other"]
+
+
 def test_h5ad_export_preserves_source_and_validates_round_trip(tmp_path: Path) -> None:
     workspace = _workspace()
     source_path = tmp_path / "source.h5ad"

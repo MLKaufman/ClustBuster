@@ -618,6 +618,16 @@ app_ui = ui.page_fillable(
                     ),
                     fill=False,
                 ),
+                ui.card(
+                    ui.card_header("Export reference matrix"),
+                    ui.p(
+                        "Average the active expression source by the current annotations "
+                        "or by any cell metadata column. The resulting CSV can be used as "
+                        "a Refmat."
+                    ),
+                    ui.output_ui("reference_matrix_export_controls"),
+                    fill=False,
+                ),
             ),
             sidebar=ui.sidebar(
                 ui.div(
@@ -1147,9 +1157,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             *(
                 ui.card(
                     ui.card_header(str(gene)),
-                    ui.output_plot(
-                        f"feature_gene_plot_{index}", width="100%", height="520px"
-                    ),
+                    ui.output_plot(f"feature_gene_plot_{index}", width="100%", height="520px"),
                     fill=False,
                 )
                 for index, gene in enumerate(result.values.columns)
@@ -2147,6 +2155,30 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     @output
+    @render.ui
+    def reference_matrix_export_controls() -> ui.TagChild:
+        current = workspace.get()
+        if current is None or not configured.get():
+            return ui.p("Configure a workspace to choose a Refmat grouping.", class_="text-muted")
+        choices = {"annotations": "Current annotations"}
+        choices.update(
+            {f"metadata:{column}": f"Metadata: {column}" for column in current.adata.obs.columns}
+        )
+        return ui.div(
+            ui.input_select(
+                "reference_matrix_group",
+                "Group cells by",
+                choices,
+                selected="annotations",
+            ),
+            ui.download_button(
+                "download_reference_matrix",
+                "Download Refmat CSV",
+                class_="btn-primary",
+            ),
+        )
+
+    @output
     @render.download_button(
         filename="clustbuster-cluster-annotations.csv",
         media_type="text/csv",
@@ -2171,6 +2203,29 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             progress.set(0.2, message="Preparing annotation tables")
             result = export_service.export_annotation_zip(current, session_files.exports)
             progress.set(1, message="Annotation export ready")
+        return str(result.artifacts[0].path)
+
+    @output
+    @render.download_button(
+        filename="clustbuster-reference-matrix.csv",
+        media_type="text/csv",
+    )
+    def download_reference_matrix() -> str:
+        current = workspace.get()
+        req(current is not None and configured.get())
+        assert current is not None
+        grouping = str(input.reference_matrix_group())
+        metadata_column = (
+            grouping.removeprefix("metadata:") if grouping.startswith("metadata:") else None
+        )
+        with ui.Progress(min=0, max=1, session=session) as progress:
+            progress.set(0.2, message="Averaging expression by group")
+            result = export_service.export_reference_matrix_csv(
+                current,
+                session_files.exports,
+                metadata_column=metadata_column,
+            )
+            progress.set(1, message="Refmat export ready")
         return str(result.artifacts[0].path)
 
     @output

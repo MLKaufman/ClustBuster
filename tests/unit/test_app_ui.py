@@ -74,10 +74,7 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
 
 def test_feature_and_dot_plots_update_without_run_buttons() -> None:
     html = _rendered_html()
-    default_genes = (
-        "PTPRC, CD3E, CD4, CD8A, MS4A1, CD14, NKG7, EPCAM, PECAM1, "
-        "COL1A1, ACTA2, MKI67"
-    )
+    default_genes = "PTPRC, CD3E, CD4, CD8A, MS4A1, CD14, NKG7, EPCAM, PECAM1, COL1A1, ACTA2, MKI67"
 
     assert 'id="run_feature"' not in html
     assert 'id="run_dotplot"' not in html
@@ -146,3 +143,12 @@ def test_refmats_uses_scrollable_stack_and_includes_correlation_table() -> None:
     assert html.index('id="reference_correlation_container"') < html.index(
         'id="reference_correlation_table"'
     )
+
+
+def test_export_page_includes_reference_matrix_controls() -> None:
+    html = _rendered_html()
+
+    assert "Export reference matrix" in html
+    assert 'id="reference_matrix_export_controls"' in html
+    assert "current annotations" in html
+    assert "cell metadata column" in html
