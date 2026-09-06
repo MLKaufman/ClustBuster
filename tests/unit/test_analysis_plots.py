@@ -58,3 +58,7 @@ def test_dotplot_figure_maps_fraction_to_marker_size() -> None:
     assert figure.layout.yaxis2.showticklabels is False
     assert figure.layout.yaxis3.showticklabels is True
     assert figure.layout.yaxis3.side == "left"
+
+    assert figure.layout.xaxis3.showticklabels is True
+    assert set(figure.layout.xaxis3.ticktext) == {"CD3D", "LYZ"}
+    assert figure.layout.xaxis3.automargin is True

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,6 +37,7 @@ from clustbuster.models import (
     CellTypeSummary,
     ExpressionSource,
     LoadedReference,
+    MarkerRecord,
     MarkerSet,
     ReferenceFilters,
     Workspace,
@@ -49,14 +52,20 @@ from clustbuster.plotting.heatmap import (
     marker_heatmap_figure,
     marker_heatmap_height,
 )
-from clustbuster.plotting.module import module_score_figure, module_score_violin_figure
+from clustbuster.plotting.module import (
+    module_score_figure,
+    module_score_static_figure,
+    module_score_violin_figure,
+)
 from clustbuster.plotting.ora import ora_heatmap_figure, ora_heatmap_height
 from clustbuster.plotting.reference import (
     reference_correlation_figure,
     reference_correlation_height,
 )
-from clustbuster.resources.markers.csv import CsvMarkerProvider
-from clustbuster.resources.references.local import LocalReferenceProvider
+from clustbuster.resources.providers import (
+    marker_provider_from_config,
+    reference_provider_from_config,
+)
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
 from clustbuster.services.workspaces import configure_workspace
@@ -117,6 +126,16 @@ def _styles() -> ui.Tag:
         .cb-cluster-summary { background:#fff; border:1px solid #dbe4e8;
                               border-radius:.5rem; padding:.75rem; }
         .cb-cluster-summary p { margin-bottom:0; }
+        .cb-square-module { position:relative; width:100%; aspect-ratio:1 / 1;
+                            flex:0 0 auto !important; }
+        .cb-square-module > .shiny-ipywidget-output { position:absolute; inset:0; }
+        .cb-catalog-plot-stack { display:flex; flex-direction:column; gap:1rem; width:100%; }
+        .cb-catalog-plot-stack > * { flex:0 0 auto !important; }
+        .cb-catalog-module-frame { position:relative; width:100%; max-width:1000px;
+                                   aspect-ratio:1 / 1; }
+        .cb-catalog-module-frame > .shiny-plot-output { position:absolute; inset:0; }
+        .cb-catalog-module-frame img { width:100% !important; height:100% !important;
+                                       object-fit:contain; }
         .cb-feature-stack { display:flex; flex-direction:column; gap:1rem; }
         .cb-module-stack { display:flex; flex-direction:column; gap:1rem; width:100%;
                            padding-bottom:1rem; }
@@ -187,6 +206,29 @@ def _plot_refresh_script() -> ui.Tag:
         })();
         """
     )
+
+
+def _square_module_output(output_id: str) -> ui.Tag:
+    return ui.div(
+        output_widget(output_id, width="100%", height="100%", fill=False),
+        class_="cb-square-module",
+    )
+
+
+def _catalog_plot_output(index: int, figure: Any, kind: str) -> ui.Tag:
+    if hasattr(figure, "to_plotly_json"):
+        # Plot builders grow with cluster count; never crop them to a fixed viewport.
+        height = int(figure.layout.height or 700)
+        return ui.div(
+            output_widget(f"catalog_widget_{index}", width="100%", height=f"{height}px"),
+            style=f"height:{height}px; min-height:{height}px;",
+        )
+    if kind == "module":
+        return ui.div(
+            ui.output_plot("catalog_module_plot", width="100%", height="100%", fill=False),
+            class_="cb-catalog-module-frame",
+        )
+    return ui.output_plot(f"catalog_feature_{index}", width="100%", height="520px")
 
 
 app_ui = ui.page_fillable(
@@ -315,7 +357,7 @@ app_ui = ui.page_fillable(
                         fill=False,
                     ),
                     ui.output_ui("module_feedback"),
-                    output_widget("module_plot", height="580px"),
+                    _square_module_output("module_plot"),
                     output_widget("module_violin_plot", height="620px"),
                     ui.card(
                         ui.card_header("Cluster summary"),
@@ -528,34 +570,24 @@ app_ui = ui.page_fillable(
                 ui.output_ui("provider_status"),
                 ui.card(
                     ui.card_header("Marker catalog"),
-                    ui.layout_columns(
-                        ui.input_text(
-                            "marker_query", "Cell-type search", placeholder="e.g. T cell"
-                        ),
-                        ui.input_select("marker_species", "Species", {"human": "Human"}),
-                        ui.input_select("marker_tissue", "Tissue", {"blood": "Blood"}),
-                        ui.input_action_button(
-                            "search_markers", "Search catalog", class_="btn-primary"
-                        ),
-                        col_widths=(5, 2, 2, 3),
-                    ),
+                    ui.output_ui("marker_search_controls"),
                     ui.output_data_frame("marker_search_table"),
                     ui.layout_columns(
                         ui.input_select("catalog_cell_type", "Cell type", {}),
                         ui.input_action_button("load_marker_set", "Load marker set"),
-                        ui.input_action_button("use_markers_feature", "Use in feature plot"),
-                        ui.input_action_button("use_markers_dot", "Use in dot plot"),
-                        col_widths=(4, 3, 3, 2),
+                        col_widths=(8, 4),
                     ),
                     ui.output_ui("marker_set_feedback"),
-                    ui.output_data_frame("marker_set_table"),
-                    fill=False,
-                ),
-                ui.card(
-                    ui.card_header("Local reference matrices"),
-                    ui.output_ui("reference_controls"),
-                    ui.output_ui("reference_feedback"),
-                    ui.output_data_frame("reference_table"),
+                    ui.output_ui("marker_set_table"),
+                    ui.layout_columns(
+                        ui.input_action_button("use_markers_feature", "Plot features"),
+                        ui.input_action_button("use_markers_dot", "Plot dot plot"),
+                        ui.input_action_button("use_markers_module", "Plot module scores"),
+                        ui.input_action_button("use_markers_heatmap", "Plot heatmap"),
+                        col_widths=(3, 3, 3, 3),
+                    ),
+                    ui.output_ui("catalog_plot_feedback"),
+                    ui.output_ui("catalog_plot_container"),
                     fill=False,
                 ),
             ),
@@ -696,11 +728,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     ora_result = reactive.Value[AllClusterOraResult | None](None)
     ora_error = reactive.Value[str | None](None)
     enrichment_client = EnrichrClient(timeout_seconds=config.enrichment_timeout_seconds)
-    marker_provider = CsvMarkerProvider(config.marker_catalog_path)
-    reference_provider = LocalReferenceProvider(config.reference_root)
+    marker_provider = marker_provider_from_config(config)
+    reference_provider = reference_provider_from_config(config)
     reference_adapter = PyClustifyrAdapter()
     marker_search_results = reactive.Value[list[CellTypeSummary]]([])
     loaded_marker_set = reactive.Value[MarkerSet | None](None)
+    loaded_catalog_selection = reactive.Value[CellTypeSummary | None](None)
+    catalog_gene_generation = reactive.Value(0)
     loaded_reference = reactive.Value[LoadedReference | None](None)
     marker_resource_error = reactive.Value[str | None](None)
     reference_resource_error = reactive.Value[str | None](None)
@@ -1218,46 +1252,103 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @render.ui
     def provider_status() -> ui.TagChild:
         marker_status = marker_provider.status()
-        reference_status = reference_provider.status()
         status_class = (
             "alert alert-success"
-            if marker_status.available and reference_status.available
+            if marker_status.available
             else "alert alert-warning"
         )
         return ui.div(
             ui.strong("Resource status"),
-            ui.p(f"Markers: {marker_status.message} · References: {reference_status.message}"),
+            ui.p(
+                f"Markers: {marker_status.message}"
+                + (f" ({marker_status.version})" if marker_status.version else "")
+            ),
             class_=status_class,
         )
 
+    @output
+    @render.ui
+    def marker_search_controls() -> ui.TagChild:
+        try:
+            facets = marker_provider.list_facets()
+        except Exception as exc:
+            return ui.div(str(exc), class_="alert alert-warning")
+        species_choices = {"": "All"} | {value: value for value in facets.species}
+        tissue_choices = {"": "All"} | {value: value for value in facets.tissues}
+        return ui.layout_columns(
+            ui.input_text("marker_query", "Search", placeholder="Search all fields"),
+            ui.input_select("marker_species", "Species", species_choices),
+            ui.input_select("marker_tissue", "Tissue", tissue_choices),
+            ui.input_select("marker_submitter", "Submitter", {"": "All"}),
+            ui.input_select("marker_collection", "Collection", {"": "All"}),
+            ui.input_action_button("search_markers", "Search catalog", class_="btn-primary"),
+            col_widths=(4, 2, 2, 2, 2, 12),
+        )
+
+    catalog_search_generation = reactive.Value(0)
+    catalog_search_pending = reactive.Value(False)
+
+    @reactive.extended_task
+    async def query_marker_catalog(
+        generation: int, query: str, species: str | None, tissue: str | None,
+    ) -> tuple[int, list[CellTypeSummary], str | None]:
+        try:
+            results = await asyncio.to_thread(
+                marker_provider.search_cell_types, query, species=species, tissue=tissue,
+            )
+            return generation, results, None
+        except Exception as exc:
+            return generation, [], str(exc)
+
+    session.on_ended(query_marker_catalog.cancel)
+
     @reactive.effect
     @reactive.event(input.search_markers)
-    def search_marker_catalog() -> None:
+    async def search_marker_catalog() -> None:
+        query_marker_catalog.cancel()
+        generation = catalog_search_generation.get() + 1
+        catalog_search_generation.set(generation)
+        catalog_search_pending.set(True)
         marker_resource_error.set(None)
         loaded_marker_set.set(None)
-        try:
-            results = marker_provider.search_cell_types(
-                str(input.marker_query()),
-                species=str(input.marker_species()),
-                tissue=str(input.marker_tissue()),
-            )
-            marker_search_results.set(results)
-            ui.update_select(
-                "catalog_cell_type",
-                choices={item.cell_type: item.cell_type for item in results},
-                session=session,
-            )
-            if not results:
-                marker_resource_error.set("No matching cell types were found")
-        except Exception as exc:
-            marker_search_results.set([])
-            marker_resource_error.set(str(exc))
+        loaded_catalog_selection.set(None)
+        reset_catalog_plots()
+        # Reset the browser's selection before replacing the table's data.
+        with suppress(Exception):
+            await marker_search_table.update_cell_selection(None)
+        marker_search_results.set([])
+        ui.update_select("catalog_cell_type", choices={}, selected="", session=session)
+        query_marker_catalog(
+            generation, str(input.marker_query()),
+            str(input.marker_species()) or None, str(input.marker_tissue()) or None,
+        )
+
+    @reactive.effect
+    @reactive.event(query_marker_catalog.result)
+    def receive_marker_catalog_search() -> None:
+        generation, results, error = query_marker_catalog.result()
+        if generation != catalog_search_generation.get():
+            return
+        marker_search_results.set(results)
+        catalog_search_pending.set(False)
+        marker_resource_error.set(
+            error or (None if results else "No matching cell types were found")
+        )
+        ui.update_select(
+            "catalog_cell_type",
+            choices={
+                str(index): " · ".join(filter(None, (item.cell_type, item.species, item.tissue)))
+                for index, item in enumerate(results)
+            },
+            selected="0" if results else "",
+            session=session,
+        )
 
     @output
     @render.data_frame
-    def marker_search_table() -> pd.DataFrame:
+    def marker_search_table() -> render.DataGrid[pd.DataFrame]:
         results = marker_search_results.get()
-        return pd.DataFrame(
+        table = pd.DataFrame(
             [
                 {
                     "Cell type": item.cell_type,
@@ -1266,23 +1357,62 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     "Markers": item.marker_count,
                 }
                 for item in results
-            ]
+            ],
+            columns=["Cell type", "Species", "Tissue", "Markers"],
         )
+
+        return render.DataGrid(table, selection_mode="row")
+
+    def ensure_catalog_marker_set(selected_index: int | None = None) -> MarkerSet:
+        marker_resource_error.set(None)
+        try:
+            if catalog_search_pending.get():
+                raise ValueError("Wait for the catalog search to finish before selecting markers.")
+            results = marker_search_results.get()
+            if selected_index is None:
+                selected_index = int(str(input.catalog_cell_type()))
+            if selected_index < 0 or selected_index >= len(results):
+                raise ValueError("Choose a marker search result first.")
+            selected = results[selected_index]
+            existing = loaded_marker_set.get()
+            if existing is not None and loaded_catalog_selection.get() == selected:
+                return existing
+            reset_catalog_plots()
+            result = marker_provider.get_markers(
+                selected.cell_type, species=selected.species, tissue=selected.tissue,
+            )
+            catalog_gene_generation.set(catalog_gene_generation.get() + 1)
+            loaded_marker_set.set(result)
+            loaded_catalog_selection.set(selected)
+            return result
+        except Exception as exc:
+            loaded_marker_set.set(None)
+            loaded_catalog_selection.set(None)
+            reset_catalog_plots()
+            marker_resource_error.set(str(exc) or "Choose a marker search result first.")
+            raise
 
     @reactive.effect
     @reactive.event(input.load_marker_set)
     def load_catalog_marker_set() -> None:
-        marker_resource_error.set(None)
-        try:
-            result = marker_provider.get_markers(
-                str(input.catalog_cell_type()),
-                species=str(input.marker_species()),
-                tissue=str(input.marker_tissue()),
-            )
-            loaded_marker_set.set(result)
-        except Exception as exc:
-            loaded_marker_set.set(None)
-            marker_resource_error.set(str(exc))
+        # The shared loader displays failures beside the marker list.
+        with suppress(Exception):
+            ensure_catalog_marker_set()
+
+    @reactive.effect
+    @reactive.event(input.marker_search_table_cell_selection)
+    def load_selected_catalog_row() -> None:
+        if catalog_search_pending.get():
+            return
+        selection = marker_search_table.cell_selection()
+        rows = selection["rows"]
+        if not rows:
+            return
+        selected_index = rows[0]
+        ui.update_select("catalog_cell_type", selected=str(selected_index), session=session)
+        # The shared loader displays failures beside the marker list.
+        with suppress(Exception):
+            ensure_catalog_marker_set(selected_index)
 
     @output
     @render.ui
@@ -1291,6 +1421,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         marker_set = loaded_marker_set.get()
         if error:
             return ui.div(error, class_="alert alert-warning")
+        if catalog_search_pending.get():
+            return ui.p("Searching marker catalog…")
         if marker_set is None:
             return ui.p("Search for a cell type and load its marker set.")
         positive = sum(record.direction == "positive" for record in marker_set.records)
@@ -1301,42 +1433,212 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             class_="alert alert-success",
         )
 
-    @output
-    @render.data_frame
-    def marker_set_table() -> pd.DataFrame:
-        marker_set = loaded_marker_set.get()
-        if marker_set is None:
-            return pd.DataFrame()
-        return pd.DataFrame(
-            [
-                {
-                    "Gene": record.gene,
-                    "Direction": record.direction,
-                    "Confidence": record.confidence,
-                    "Evidence": record.evidence,
-                }
-                for record in marker_set.records
-            ]
+    def catalog_gene_input_id(index: int) -> str:
+        return f"catalog_gene_{catalog_gene_generation.get()}_{index}"
+
+    def selected_catalog_genes(marker_set: MarkerSet) -> tuple[str, ...]:
+        genes = tuple(dict.fromkeys(record.gene for record in marker_set.records))
+        return tuple(
+            gene for index, gene in enumerate(genes)
+            if not input[catalog_gene_input_id(index)].is_set()
+            or bool(input[catalog_gene_input_id(index)]())
         )
 
-    def _positive_catalog_genes() -> str:
+    @output
+    @render.ui
+    def marker_set_table() -> ui.TagChild:
         marker_set = loaded_marker_set.get()
-        req(marker_set is not None)
-        assert marker_set is not None
-        genes = [record.gene for record in marker_set.records if record.direction == "positive"]
-        return ", ".join(genes)
+        if marker_set is None:
+            return ui.div()
+        rows = []
+        genes = tuple(dict.fromkeys(record.gene for record in marker_set.records))
+        def values(records: list[MarkerRecord], field: str) -> str:
+            return "; ".join(dict.fromkeys(
+                str(value) for record in records
+                if (value := getattr(record, field)) is not None and str(value) != ""
+            ))
+
+        for index, gene in enumerate(genes):
+            records = [record for record in marker_set.records if record.gene == gene]
+            confidence = "; ".join(dict.fromkeys(
+                str(record.confidence_label or record.confidence)
+                for record in records
+                if record.confidence_label or record.confidence is not None
+            ))
+            rows.append(ui.tags.tr(
+                ui.tags.td(ui.input_checkbox(catalog_gene_input_id(index), gene, value=True)),
+                *(ui.tags.td(value) for value in (
+                    values(records, "direction"), confidence, values(records, "verified"),
+                    values(records, "evidence"), values(records, "citation"),
+                )),
+            ))
+        return ui.div(
+            ui.help_text("Click a gene checkbox to include or exclude it from the next plot. "
+                         "All genes start enabled."),
+            ui.tags.table(
+                ui.tags.thead(ui.tags.tr(*(ui.tags.th(label) for label in (
+                    "Plot / Gene", "Direction", "Confidence", "Verified", "Evidence", "Citation",
+                )))),
+                ui.tags.tbody(*rows),
+                class_="table table-striped table-hover",
+            ),
+            style="max-height:420px; overflow:auto;",
+        )
+
+    catalog_plots = reactive.Value[list[Any]]([])
+    catalog_plot_error = reactive.Value[str | None](None)
+    catalog_plot_missing = reactive.Value[tuple[str, ...]](())
+    registered_catalog_plots: set[int] = set()
+
+    catalog_plot_kind = reactive.Value("")
+
+    def reset_catalog_plots() -> None:
+        catalog_plots.set([])
+        catalog_plot_error.set(None)
+        catalog_plot_missing.set(())
+        catalog_plot_kind.set("")
+
+    @reactive.effect
+    def clear_catalog_plots() -> None:
+        workspace.get()
+        configuration_revision.get()
+        reset_catalog_plots()
+
+    def register_catalog_plot(index: int) -> None:
+        if index in registered_catalog_plots:
+            return
+
+        @output(id=f"catalog_feature_{index}")
+        @render.plot(alt="Marker catalog feature expression")
+        def catalog_feature() -> Any:
+            plots = catalog_plots.get()
+            req(index < len(plots) and not hasattr(plots[index], "to_plotly_json"))
+            return plots[index]
+
+        registered_catalog_plots.add(index)
+
+    def plot_catalog(kind: str) -> None:
+        catalog_plots.set([])
+        catalog_plot_error.set(None)
+        catalog_plot_missing.set(())
+        try:
+            current = workspace.get()
+            marker_set = ensure_catalog_marker_set()
+            if current is None or not configured.get():
+                raise ValueError("Import and configure a workspace before plotting.")
+            assert current.cluster_column is not None and current.embedding_key is not None
+            genes = selected_catalog_genes(marker_set)
+            if not genes:
+                raise ValueError("Select at least one gene in the marker list before plotting.")
+            coordinates = np.asarray(current.adata.obsm[current.embedding_key])
+            plots: list[Any]
+            if kind == "feature":
+                expression = extract_expression(current.adata, current.expression_source, genes)
+                report = expression.report
+                plots = [
+                    feature_gene_figure(coordinates, str(gene), expression.values[gene].to_numpy())
+                    for gene in expression.values.columns
+                ]
+                for index in range(len(plots)):
+                    register_catalog_plot(index)
+            elif kind == "module":
+                module = calculate_module_score(
+                    current.adata, current.expression_source, current.cluster_column,
+                    genes, name=marker_set.cell_type,
+                )
+                report = module.report
+                plots = [
+                    module_score_static_figure(coordinates, module),
+                    module_score_violin_figure(module),
+                ]
+            else:
+                dots = aggregate_dotplot(
+                    current.adata, current.expression_source, current.cluster_column, genes,
+                )
+                report = dots.report
+                if kind == "dot":
+                    plots = [dotplot_figure(dots)]
+                else:
+                    means = dots.values.pivot(
+                        index="cluster_id", columns="gene", values="mean_expression"
+                    )
+                    labels = dots.values.drop_duplicates("cluster_id").set_index("cluster_id")
+                    means.index = labels.loc[means.index, "cluster_display"].astype(str)
+                    figure = marker_heatmap_figure(
+                        MarkerResult(marker_set.cell_type, "catalog", pd.DataFrame(), means)
+                    )
+                    figure.update_layout(title=f"{marker_set.cell_type} marker expression")
+                    plots = [figure]
+            catalog_plot_missing.set((*report.missing, *report.ambiguous))
+            catalog_plot_kind.set(kind)
+            catalog_plots.set(plots)
+        except Exception as exc:
+            catalog_plot_error.set(str(exc))
 
     @reactive.effect
     @reactive.event(input.use_markers_feature)
-    def use_catalog_markers_in_feature_plot() -> None:
-        ui.update_text_area("feature_genes", value=_positive_catalog_genes(), session=session)
-        ui.notification_show("Feature-plot genes updated", type="message", session=session)
+    def plot_catalog_features() -> None:
+        plot_catalog("feature")
 
     @reactive.effect
     @reactive.event(input.use_markers_dot)
-    def use_catalog_markers_in_dot_plot() -> None:
-        ui.update_text_area("dot_genes", value=_positive_catalog_genes(), session=session)
-        ui.notification_show("Dot-plot genes updated", type="message", session=session)
+    def plot_catalog_dot() -> None:
+        plot_catalog("dot")
+
+    @reactive.effect
+    @reactive.event(input.use_markers_module)
+    def plot_catalog_module() -> None:
+        plot_catalog("module")
+
+    @reactive.effect
+    @reactive.event(input.use_markers_heatmap)
+    def plot_catalog_heatmap() -> None:
+        plot_catalog("heatmap")
+
+    @output
+    @render.ui
+    def catalog_plot_feedback() -> ui.TagChild:
+        error = catalog_plot_error.get()
+        if error:
+            return ui.div(error, class_="alert alert-danger")
+        missing = catalog_plot_missing.get()
+        if missing:
+            return ui.div("Not plotted: " + ", ".join(missing), class_="alert alert-warning")
+        return ui.div()
+
+    @output
+    @render.ui
+    def catalog_plot_container() -> ui.TagChild:
+        return ui.div(
+            *(
+                _catalog_plot_output(index, figure, catalog_plot_kind.get())
+                for index, figure in enumerate(catalog_plots.get())
+            ),
+            class_="cb-catalog-plot-stack",
+        )
+
+    @output
+    @render.plot(width=1000, height=1000, alt="Marker catalog module-score UMAP")
+    def catalog_module_plot() -> Any:
+        plots = catalog_plots.get()
+        req(catalog_plot_kind.get() == "module" and plots)
+        return plots[0]
+
+    @output
+    @render_plotly
+    def catalog_widget_0() -> Any:
+        plots = catalog_plots.get()
+        if not plots or not hasattr(plots[0], "to_plotly_json"):
+            return None
+        return plots[0]
+
+    @output
+    @render_plotly
+    def catalog_widget_1() -> Any:
+        plots = catalog_plots.get()
+        if len(plots) < 2 or not hasattr(plots[1], "to_plotly_json"):
+            return None
+        return plots[1]
 
     @output
     @render.ui

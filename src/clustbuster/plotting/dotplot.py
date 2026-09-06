@@ -113,6 +113,9 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
         tickvals=list(x_positions.values()),
         ticktext=ordered_genes,
         tickangle=-45,
+        showticklabels=True,
+        automargin=True,
+        side="bottom",
         row=2,
         col=2,
     )

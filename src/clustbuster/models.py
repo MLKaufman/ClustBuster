@@ -151,6 +151,8 @@ class MarkerRecord:
     evidence: str | None = None
     citation: str | None = None
     confidence: float | None = None
+    confidence_label: str | None = None
+    verified: bool | None = None
     resource_version: str | None = None
 
 
@@ -158,6 +160,12 @@ class MarkerRecord:
 class MarkerSet:
     cell_type: str
     records: tuple[MarkerRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MarkerFacets:
+    species: tuple[str, ...] = ()
+    tissues: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

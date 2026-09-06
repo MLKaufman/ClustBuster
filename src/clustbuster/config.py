@@ -21,6 +21,10 @@ def _positive_int(value: str, name: str) -> int:
     return parsed
 
 
+def _optional_path(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     """Validated configuration populated once at application startup."""
@@ -32,7 +36,11 @@ class AppConfig:
     cache_limit_mb: int = 1024
     enrichment_timeout_seconds: int = 20
     marker_catalog_path: Path = Path("resources/marker_sets/immune_markers.csv")
+    marker_db_path: Path | None = None
     reference_root: Path = Path("resources/reference_matrices")
+    reference_catalog_path: Path | None = None
+    reference_files_root: Path | None = None
+    atlas_version: str | None = None
     log_level: str = "INFO"
     enable_seurat_import: bool = False
     enable_sce_import: bool = False
@@ -65,12 +73,16 @@ class AppConfig:
                     "resources/marker_sets/immune_markers.csv",
                 )
             ).expanduser(),
+            marker_db_path=_optional_path(os.getenv(f"{prefix}MARKER_DB_PATH")),
             reference_root=Path(
                 os.getenv(
                     f"{prefix}REFERENCE_ROOT",
                     "resources/reference_matrices",
                 )
             ).expanduser(),
+            reference_catalog_path=_optional_path(os.getenv(f"{prefix}REFERENCE_CATALOG_PATH")),
+            reference_files_root=_optional_path(os.getenv(f"{prefix}REFERENCE_FILES_ROOT")),
+            atlas_version=os.getenv(f"{prefix}ATLAS_VERSION") or None,
             log_level=log_level,
             enable_seurat_import=os.getenv(f"{prefix}ENABLE_SEURAT_IMPORT", "0") == "1",
             enable_sce_import=os.getenv(f"{prefix}ENABLE_SCE_IMPORT", "0") == "1",

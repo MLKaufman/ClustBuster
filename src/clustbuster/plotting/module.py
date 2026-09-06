@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import plotly.graph_objects as go
+from matplotlib.figure import Figure
 
 from clustbuster.core.modules import ModuleScoreResult
 
@@ -77,4 +78,36 @@ def module_score_violin_figure(result: ModuleScoreResult) -> go.Figure:
         yaxis_title="Module score",
         violinmode="overlay",
     )
+    return figure
+
+
+def module_score_static_figure(
+    coordinates: np.ndarray, result: ModuleScoreResult
+) -> Figure:
+    """Render a square, raster-friendly module-score embedding."""
+    scores = result.values["module_score"].to_numpy(dtype=float)
+    order = np.argsort(scores, kind="stable")
+    limit = max(float(np.abs(scores).max()), 1e-8)
+    figure = Figure(figsize=(10, 10))
+    axes = figure.subplots()
+    points = axes.scatter(
+        coordinates[order, 0], coordinates[order, 1], c=scores[order],
+        cmap="RdBu_r", vmin=-limit, vmax=limit, s=6, alpha=0.82,
+        edgecolors="none", rasterized=True,
+    )
+    # Equal ranges keep the embedding square without distorting its coordinates.
+    centers = (coordinates[:, :2].min(axis=0) + coordinates[:, :2].max(axis=0)) / 2
+    half_span = max(float(np.ptp(coordinates[:, :2], axis=0).max()) * 0.55, 0.5)
+    axes.set_xlim(centers[0] - half_span, centers[0] + half_span)
+    axes.set_ylim(centers[1] - half_span, centers[1] + half_span)
+    axes.set_aspect("equal", adjustable="box")
+    axes.set_box_aspect(1)
+    # Resizing must adjust the axes box, never the data limits (which can crop cells).
+    axes.set_adjustable("box")
+    axes.set_title(result.name)
+    axes.set_xlabel("Dimension 1")
+    axes.set_ylabel("Dimension 2")
+    axes.spines[["top", "right"]].set_visible(False)
+    figure.colorbar(points, ax=axes, pad=0.02, shrink=0.8, label="Module score")
+    figure.set_layout_engine("tight", pad=2.5)
     return figure

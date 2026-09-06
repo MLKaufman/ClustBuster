@@ -83,6 +83,24 @@ provider secrets outside the repository and restrict access to the environment f
   container create/start/stop/remove operations. Traefik uses only a static file
   provider and receives no Docker socket.
 
+## Sovereign Atlas resources
+
+For production, stage one immutable Sovereign Atlas release directory on the host,
+mount it read-only at `/atlas` in every ClustBuster session container, and set:
+
+```text
+CLUSTBUSTER_MARKER_DB_PATH=/atlas/markercodex.duckdb
+CLUSTBUSTER_REFERENCE_CATALOG_PATH=/atlas/reference_matrices.duckdb
+CLUSTBUSTER_REFERENCE_FILES_ROOT=/atlas/reference_matrices/files
+CLUSTBUSTER_ATLAS_VERSION=<release tag or commit>
+```
+
+Do not point running containers at a checkout being modified by the curator. Publish
+or stage a complete new directory and restart sessions onto it; existing sessions
+can finish against the previous immutable directory. This avoids mixing database
+metadata with matrix files from different revisions and makes rollback a path or
+image change.
+
 ## Upgrade and rollback
 
 1. Back up `deployment/.env.production`, certificates, and the deployment YAML files.

@@ -64,6 +64,9 @@ def test_workspace_and_tab_labels_match_product_language() -> None:
     assert 'data-value="Resources"' not in html
     assert 'data-value="Reference annotation"' not in html
     assert 'data-value="Markers &amp; heatmap"' not in html
+    assert 'id="marker_search_controls"' in html
+    assert 'id="marker_species"' not in html
+    assert "Reference matrices" not in html
     assert html.index('data-value="Module scores"') < html.index('data-value="MarkerCodex"')
     assert html.index('data-value="Top Markers"') < html.index('data-value="MarkerCodex"')
     assert html.index('data-value="Top Markers"') < html.index('data-value="All Markers"')
@@ -152,3 +155,20 @@ def test_export_page_includes_reference_matrix_controls() -> None:
     assert 'id="reference_matrix_export_controls"' in html
     assert "current annotations" in html
     assert "cell metadata column" in html
+
+
+def test_marker_catalog_places_replacing_plot_area_below_loaded_list() -> None:
+    html = _rendered_html()
+    list_position = html.index('id="marker_set_table"')
+    plot_position = html.index('id="catalog_plot_container"')
+    for action, label in (
+        ("feature", "Plot features"),
+        ("dot", "Plot dot plot"),
+        ("module", "Plot module scores"),
+        ("heatmap", "Plot heatmap"),
+    ):
+        assert list_position < html.index(f'id="use_markers_{action}"') < plot_position
+        assert label in html
+    assert "Use in feature plot" not in html
+    assert "Use in dot plot" not in html
+    assert 'id="reference_controls"' not in html

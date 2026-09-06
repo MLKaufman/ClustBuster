@@ -5,6 +5,7 @@ from typing import Protocol
 from clustbuster.models import (
     CellTypeSummary,
     LoadedReference,
+    MarkerFacets,
     MarkerSet,
     ProviderStatus,
     ReferenceFilters,
@@ -14,6 +15,8 @@ from clustbuster.models import (
 
 class MarkerProvider(Protocol):
     def status(self) -> ProviderStatus: ...
+
+    def list_facets(self) -> MarkerFacets: ...
 
     def search_cell_types(
         self,
@@ -39,4 +42,3 @@ class ReferenceProvider(Protocol):
     def list_references(self, filters: ReferenceFilters) -> list[ReferenceSummary]: ...
 
     def load_reference(self, reference_id: str) -> LoadedReference: ...
-

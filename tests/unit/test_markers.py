@@ -86,6 +86,9 @@ def test_marker_heatmap_is_standardized_and_labeled() -> None:
     )
     figure = marker_heatmap_figure(result)
     assert figure.data[0].type == "heatmap"
+    assert figure.layout.xaxis3.showticklabels is True
+    assert set(figure.layout.xaxis3.ticktext) == set(result.heatmap.columns)
+    assert figure.layout.xaxis3.automargin is True
     assert sum(trace.mode == "lines" for trace in figure.data[1:]) == max(
         len(result.heatmap.columns) - 1, 0
     )

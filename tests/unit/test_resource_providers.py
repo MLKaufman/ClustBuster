@@ -117,3 +117,14 @@ def test_local_reference_provider_enforces_checksum(tmp_path: Path) -> None:
     _reference_fixture(tmp_path, bad_checksum=True)
     with pytest.raises(ProviderSchemaError, match="checksum"):
         LocalReferenceProvider(tmp_path).load_reference("demo")
+
+
+@pytest.mark.parametrize("query", ["cd3d", "HUMAN", "blood", "canonical", "fixture", "0.95"])
+def test_csv_marker_search_matches_all_fields(tmp_path: Path, query: str) -> None:
+    path = tmp_path / "markers.csv"
+    _marker_catalog(path)
+    provider = CsvMarkerProvider(path)
+    results = provider.search_cell_types(query)
+    assert "T cell" in [item.cell_type for item in results]
+    assert provider.search_cell_types(query, species="mouse") == []
+    assert len(provider.get_markers("T cell").records) == 2

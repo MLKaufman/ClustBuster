@@ -114,6 +114,96 @@ and unavailable resources degrade only the Resources panel.
 The bundled records are synthetic workflow fixtures, not an authoritative marker
 database or a substitute for biological review.
 
+### Sovereign Atlas / MarkerCodex
+
+ClustBuster can instead consume a Sovereign Atlas checkout or immutable release
+bundle directly. The two DuckDB catalogs are always opened read-only, and reference
+matrix paths are resolved beneath a separately configured read-only files directory.
+For a sibling checkout, start ClustBuster with:
+
+```bash
+CLUSTBUSTER_MARKER_DB_PATH=../sovereign-atlas/data/markercodex.duckdb \
+CLUSTBUSTER_REFERENCE_CATALOG_PATH=../sovereign-atlas/data/reference_matrices.duckdb \
+CLUSTBUSTER_REFERENCE_FILES_ROOT=../sovereign-atlas/data/reference_matrices/files \
+CLUSTBUSTER_ATLAS_VERSION=preview-local \
+uv run shiny run clustbuster.app:app
+```
+
+Alternatively, `./run_local.sh` automatically detects `../sovereign-atlas`, configures
+all three data paths, and labels the resource with that checkout's current commit.
+Set `CLUSTBUSTER_ATLAS_REPO=/another/path/sovereign-atlas` before running the script
+when the checkout is elsewhere.
+
+Setting a database path selects its DuckDB provider; leaving it unset preserves the
+bundled CSV/local provider. `CLUSTBUSTER_ATLAS_VERSION` should be a release tag or
+source commit. If it is omitted, the marker provider reports a short checksum of the
+database instead.
+
+The MarkerCodex provider targets the `marker_atlas` consumer view and recognizes a
+small set of documented prerelease column aliases. It fails only the Resources panel
+with a compatibility message when required consumer fields disappear. This keeps
+schema adaptation at the provider boundary while Sovereign Atlas is still evolving.
+
+DuckDB and the operating-system page cache handle marker queries. ClustBuster caches
+only resolved schemas and successful reference checksums for a provider's lifetime;
+it does not copy either catalog, cache query-expression data between sessions, or
+download atlas data at runtime. Production deployments should mount a pinned atlas
+bundle read-only or bake that exact bundle into the session image.
+
+#### Updating Sovereign Atlas data
+
+Atlas updates are intentionally not applied automatically. ClustBuster treats one
+Sovereign Atlas revision as an immutable snapshot so a running analysis cannot mix
+database metadata from one revision with reference-matrix bytes from another.
+
+For a local sibling checkout:
+
+1. Stop the running ClustBuster process.
+2. Update and validate Sovereign Atlas according to that repository's instructions:
+
+   ```bash
+   git -C ../sovereign-atlas pull --ff-only
+   git -C ../sovereign-atlas rev-parse --short HEAD
+   ```
+
+3. Restart ClustBuster with the reported commit as the resource version:
+
+   ```bash
+   CLUSTBUSTER_MARKER_DB_PATH=../sovereign-atlas/data/markercodex.duckdb \
+   CLUSTBUSTER_REFERENCE_CATALOG_PATH=../sovereign-atlas/data/reference_matrices.duckdb \
+   CLUSTBUSTER_REFERENCE_FILES_ROOT=../sovereign-atlas/data/reference_matrices/files \
+   CLUSTBUSTER_ATLAS_VERSION=NEW_COMMIT \
+   uv run shiny run clustbuster.app:app
+   ```
+
+   Replace `NEW_COMMIT` with the revision printed in step 2.
+
+No manual cache deletion is required. Restarting ClustBuster discards its in-process
+schema and checksum caches, while the operating system manages its own file cache.
+Do not run the Sovereign Atlas curator or replace its databases and matrix files while
+ClustBuster is using that checkout.
+
+For production, publish or stage each atlas revision in a new versioned directory,
+for example:
+
+```text
+/opt/sovereign-atlas/releases/2026.09.01/
+/opt/sovereign-atlas/releases/2026.09.15/
+```
+
+Each directory should contain the two DuckDB databases and the complete
+`reference_matrices/files/` directory from the same revision. Validate the new
+bundle, mount it read-only into new ClustBuster session containers, set
+`CLUSTBUSTER_ATLAS_VERSION` to its release tag or commit, and restart the application.
+Keep the preceding directory unchanged until the new deployment has been verified;
+rollback then consists of restoring the previous image or read-only mount.
+
+Compatible schema changes require no ClustBuster changes. If Sovereign Atlas removes
+or renames a required consumer field, the affected MarkerCodex or Refmats panel shows
+a compatibility warning instead of preventing the rest of ClustBuster from starting.
+Update the corresponding DuckDB provider's centralized column aliases or contract,
+run the provider tests, and redeploy before adopting that atlas revision.
+
 ## Reference annotation
 
 After configuring a workspace, open **Reference annotation**, choose a validated

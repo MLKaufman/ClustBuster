@@ -169,6 +169,9 @@ def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
         tickvals=x_positions,
         ticktext=gene_labels,
         tickangle=-45,
+        showticklabels=True,
+        automargin=True,
+        side="bottom",
         row=2,
         col=2,
     )

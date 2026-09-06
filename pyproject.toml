@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "ClustBuster contributors" }]
 dependencies = [
   "anndata>=0.11,<0.13",
+  "duckdb>=1.3,<2",
   "matplotlib>=3.9,<4",
   "numpy>=2.0,<3",
   "pandas>=2.2,<4",

@@ -8,6 +8,7 @@ import pandas as pd
 
 from clustbuster.models import (
     CellTypeSummary,
+    MarkerFacets,
     MarkerRecord,
     MarkerSet,
     ProviderStatus,
@@ -84,6 +85,13 @@ class CsvMarkerProvider:
             ", ".join(versions),
         )
 
+    def list_facets(self) -> MarkerFacets:
+        table = self._load()
+        return MarkerFacets(
+            species=tuple(sorted(filter(None, set(table["species"])), key=str.casefold)),
+            tissues=tuple(sorted(filter(None, set(table["tissue"])), key=str.casefold)),
+        )
+
     @staticmethod
     def _filter(
         table: pd.DataFrame,
@@ -115,7 +123,9 @@ class CsvMarkerProvider:
         table = self._filter(self._load(), species=species, tissue=tissue)
         if query.strip():
             table = table.loc[
-                table["cell_type"].str.contains(query.strip(), case=False, regex=False)
+                table.astype(str).apply(
+                    lambda column: column.str.contains(query.strip(), case=False, regex=False)
+                ).any(axis=1)
             ]
         summaries: list[CellTypeSummary] = []
         grouped = table.groupby(["cell_type", "species", "tissue"], sort=True)
