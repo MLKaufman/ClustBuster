@@ -138,3 +138,47 @@ Normal logout, heartbeat expiry, and maximum lifetime remove session containers.
 After a maintenance stop, list any remaining ShinyProxy-managed containers before
 removing them. Never prune volumes or images blindly on a host containing unrelated
 workloads.
+
+## Portable release images
+
+`deployment/compose.portable.yml` runs a prebuilt image on localhost:8000 with a
+read-only root filesystem and a writable named volume at `/data/gene_sets`.
+ARM64 and AMD64 release images are packaged separately. Copy the matching image
+archive and portable Compose file to the destination and use `docker load -i`.
+Set `CLUSTBUSTER_IMAGE` and `CLUSTBUSTER_PLATFORM` for ARM64; defaults target AMD64.
+No host Python or R installation is required.
+
+The container entrypoint copies bundled enrichment libraries into the persistent
+cache on first use. Existing files are retained across restarts and image upgrades;
+Settings downloads can replace them explicitly. Both development Compose and
+ShinyProxy session containers mount a named enrichment-cache volume. Do not remove
+this volume unless you intend to discard downloaded libraries. Annotation state,
+uploaded data, and exports remain session-scoped; download exports before stopping.
+
+Before building a release, download the six human and four supported mouse libraries
+in Settings, then stage Atlas with:
+
+```sh
+uv run python scripts/stage_release_resources.py /path/to/sovereign-atlas
+```
+
+This copies a snapshot and checksum manifest into ignored `resources/atlas/`.
+The container activates this snapshot automatically; explicit `CLUSTBUSTER_*` Atlas
+settings still override it. A clean checkout needs resources staged before packaging.
+To replace an existing snapshot, move `resources/atlas/` aside before staging again.
+
+Build and verify both platforms, for example:
+
+```sh
+docker buildx build --platform linux/arm64 --load -t clustbuster:2026.09.06-arm64 .
+docker buildx build --platform linux/amd64 --load -t clustbuster:2026.09.06-amd64 .
+scripts/container_smoke.sh clustbuster:2026.09.06-arm64
+scripts/container_smoke.sh clustbuster:2026.09.06-amd64
+```
+
+The release smoke test requires the full staged resources. It checks non-root
+startup on a read-only filesystem, HTTP health, native species offline enrichment,
+MarkerCodex search, loading all bundled Refmats, and cache persistence in a second
+container with networking disabled. Testing AMD64 under ARM emulation does not
+replace validation on a physical destination host. Preserve the reference metadata
+and source attribution when transferring the bundle.

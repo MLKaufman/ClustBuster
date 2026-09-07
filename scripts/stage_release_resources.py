@@ -21,7 +21,9 @@ required = ['markercodex.duckdb', 'reference_matrices.duckdb', 'reference_matric
 for name in required:
     if not (data / name).exists():
         raise SystemExit(f'Missing Atlas resource: {data / name}')
-revision = subprocess.check_output(['git', '-C', str(args.atlas), 'rev-parse', 'HEAD'], text=True).strip()
+revision = subprocess.check_output(
+    ['git', '-C', str(args.atlas), 'rev-parse', 'HEAD'], text=True,
+).strip()
 for name in required:
     source, target = data / name, destination / name
     target.parent.mkdir(parents=True, exist_ok=True)

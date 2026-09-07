@@ -1,0 +1,24 @@
+name: clustbuster
+services:
+  clustbuster:
+    image: ${CLUSTBUSTER_IMAGE:-clustbuster:2026.09.06-amd64}
+    platform: ${CLUSTBUSTER_PLATFORM:-linux/amd64}
+    ports:
+      - "127.0.0.1:${CLUSTBUSTER_PORT:-8000}:8000"
+    environment:
+      CLUSTBUSTER_ENABLE_SEURAT_IMPORT: "1"
+      CLUSTBUSTER_ENABLE_SCE_IMPORT: "1"
+      CLUSTBUSTER_MAX_UPLOAD_MB: "2048"
+    volumes:
+      - gene-sets:/data/gene_sets
+    tmpfs:
+      - /workspace:size=8G,mode=1777
+      - /tmp:size=3G,mode=1777
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+volumes:
+  gene-sets:
