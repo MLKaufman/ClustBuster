@@ -31,5 +31,19 @@ def test_catalog_container_fits_cluster_dependent_figure(cluster_count: int, kin
     assert f"min-height:{figure.layout.height}px" in html
     assert figure.layout.xaxis3.showticklabels is True
     assert set(figure.layout.xaxis3.ticktext) == set(adata.var_names)
+    if kind == "dot":
+        assert figure.layout.height >= 48 * cluster_count + 240
+        assert "overflow-x:auto" in html
+        assert f"min-width:{figure.layout.width}px" in html
     if cluster_count >= 35:
         assert figure.layout.height > 700
+
+
+def test_all_marker_heatmap_dimensions_grow_without_old_caps() -> None:
+    from clustbuster.plotting.heatmap import (
+        all_marker_heatmap_height,
+        all_marker_heatmap_width,
+    )
+    assert all_marker_heatmap_height(100) > 1600
+    assert all_marker_heatmap_height(200) - all_marker_heatmap_height(100) == 2400
+    assert all_marker_heatmap_width(80) > all_marker_heatmap_width(35) > 1200

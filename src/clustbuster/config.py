@@ -35,6 +35,7 @@ class AppConfig:
     max_upload_mb: int = 2048
     cache_limit_mb: int = 1024
     enrichment_timeout_seconds: int = 20
+    gene_set_cache_root: Path = Path("resources/gene_sets")
     marker_catalog_path: Path = Path("resources/marker_sets/immune_markers.csv")
     marker_db_path: Path | None = None
     reference_root: Path = Path("resources/reference_matrices")
@@ -67,6 +68,9 @@ class AppConfig:
                 os.getenv(f"{prefix}ENRICHMENT_TIMEOUT_SECONDS", "20"),
                 f"{prefix}ENRICHMENT_TIMEOUT_SECONDS",
             ),
+            gene_set_cache_root=Path(
+                os.getenv(f"{prefix}GENE_SET_CACHE_ROOT", "resources/gene_sets")
+            ).expanduser(),
             marker_catalog_path=Path(
                 os.getenv(
                     f"{prefix}MARKER_CATALOG_PATH",

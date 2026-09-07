@@ -98,3 +98,17 @@ def test_static_module_layout_keeps_cells_and_labels_inside_image(size: tuple[in
         bounds = axis.get_tightbbox(renderer)
         assert bounds.x0 >= 0 and bounds.y0 >= 0
         assert bounds.x1 <= figure.bbox.width and bounds.y1 <= figure.bbox.height
+
+
+def test_module_annotations_do_not_merge_clusters_and_refresh_labels() -> None:
+    result = calculate_module_score(_adata(), ExpressionSource.x(), "cluster", ("CD3D", "LYZ"))
+    ids = result.cluster_summary["cluster_id"].tolist()
+    labels = dict.fromkeys(ids, "T cell")
+    figure = module_score_violin_figure(result, labels)
+    assert len(figure.data) == 2
+    assert [len(trace.y) for trace in figure.data] == [2, 2]
+    assert figure.data[0].x[0] != figure.data[1].x[0]
+    labels[ids[0]] = "CD8 T cell"
+    updated = module_score_violin_figure(result, labels)
+    assert list(updated.layout.xaxis.ticktext) == ["CD8 T cell", "T cell"]
+    assert result.cluster_summary["cluster"].tolist() == ["a", "b"]

@@ -10,3 +10,7 @@ workspace
 *.pyc
 .DS_Store
 
+
+dist
+build
+testdata

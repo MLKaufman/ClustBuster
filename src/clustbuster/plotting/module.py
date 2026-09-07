@@ -45,16 +45,19 @@ def module_score_figure(
     return figure
 
 
-def module_score_violin_figure(result: ModuleScoreResult) -> go.Figure:
+def module_score_violin_figure(
+    result: ModuleScoreResult, labels: dict[str, str] | None = None,
+) -> go.Figure:
     figure = go.Figure()
-    cluster_order = result.cluster_summary["cluster"].astype(str).tolist()
-    for cluster in cluster_order:
+    for position, row in enumerate(result.cluster_summary.itertuples()):
+        cluster = (labels or {}).get(str(row.cluster_id), str(row.cluster))
         values = result.values.loc[
-            result.values["cluster"].astype(str) == cluster, "module_score"
+            result.values["cluster_id"].astype(str) == str(row.cluster_id), "module_score"
         ].to_numpy()
         figure.add_trace(
             go.Violin(
-                x=[cluster] * len(values),
+                x=[position] * len(values),
+                text=[cluster] * len(values),
                 y=values,
                 name=cluster,
                 box_visible=True,
@@ -65,16 +68,20 @@ def module_score_violin_figure(result: ModuleScoreResult) -> go.Figure:
                 marker={"size": 5, "opacity": 0.62, "color": "#2d8c88"},
                 line={"color": "#19324a"},
                 fillcolor="rgba(45, 140, 136, 0.28)",
-                hovertemplate=("Cluster: %{x}<br>Module score: %{y:.3f}<extra></extra>"),
+                hovertemplate=("Cluster: %{text}<br>Module score: %{y:.3f}<extra></extra>"),
                 showlegend=False,
             )
         )
     figure.update_layout(
-        title=f"{result.name} by source cluster",
+        title=f"{result.name} by cluster",
         template="plotly_white",
         height=620,
         margin={"l": 60, "r": 30, "t": 55, "b": 70},
-        xaxis_title="Source cluster",
+        xaxis_title="Cluster",
+        xaxis={"tickmode": "array",
+               "tickvals": list(range(len(result.cluster_summary))),
+               "ticktext": [(labels or {}).get(str(row.cluster_id), str(row.cluster))
+                            for row in result.cluster_summary.itertuples()]},
         yaxis_title="Module score",
         violinmode="overlay",
     )
@@ -82,7 +89,8 @@ def module_score_violin_figure(result: ModuleScoreResult) -> go.Figure:
 
 
 def module_score_static_figure(
-    coordinates: np.ndarray, result: ModuleScoreResult
+    coordinates: np.ndarray, result: ModuleScoreResult,
+    annotations: tuple[tuple[float, float, str], ...] = (),
 ) -> Figure:
     """Render a square, raster-friendly module-score embedding."""
     scores = result.values["module_score"].to_numpy(dtype=float)
@@ -95,6 +103,9 @@ def module_score_static_figure(
         cmap="RdBu_r", vmin=-limit, vmax=limit, s=6, alpha=0.82,
         edgecolors="none", rasterized=True,
     )
+    for x, y, label in annotations:
+        axes.text(x, y, label, ha="center", va="center", fontsize=9,
+                  bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"})
     # Equal ranges keep the embedding square without distorting its coordinates.
     centers = (coordinates[:, :2].min(axis=0) + coordinates[:, :2].max(axis=0)) / 2
     half_span = max(float(np.ptp(coordinates[:, :2], axis=0).max()) * 0.55, 0.5)

@@ -14,10 +14,13 @@ def reference_correlation_height(cluster_count: int) -> int:
     return min(1100, max(650, 28 * cluster_count + 280))
 
 
-def reference_correlation_figure(result: ReferenceAnnotationResult) -> go.Figure:
+def reference_correlation_figure(
+    result: ReferenceAnnotationResult, labels: dict[str, str] | None = None,
+) -> go.Figure:
     display_by_id = {
         prediction.cluster_id: prediction.cluster_display for prediction in result.predictions
     }
+    display_by_id.update(labels or {})
     correlations = result.correlations
     matrix = correlations.to_numpy(dtype=float)
     row_hierarchy = cluster_hierarchy(matrix)
@@ -66,6 +69,34 @@ def reference_correlation_figure(result: ReferenceAnnotationResult) -> go.Figure
         row=2,
         col=2,
     )
+    # Apply consumes these predictions directly; do not independently choose an argmax.
+    predictions = {prediction.cluster_id: prediction for prediction in result.predictions}
+    star_x: list[int] = []
+    star_y: list[int] = []
+    star_data: list[list[str]] = []
+    for row_position, original_row in enumerate(row_order):
+        prediction = predictions.get(str(correlations.index[original_row]))
+        if prediction is None or prediction.annotation == "unassigned":
+            continue
+        annotation = prediction.annotation
+        selected = {annotation}
+        if annotation not in reference_labels and annotation.endswith("-CLASH!"):
+            selected = set(annotation.removesuffix("-CLASH!").split("; "))
+        for column_position, label in enumerate(reference_labels):
+            if label in selected:
+                star_x.append(x_positions[column_position])
+                star_y.append(y_positions[row_position])
+                star_data.append([display_by_id[prediction.cluster_id], label, annotation])
+    figure.add_trace(
+        go.Scatter(
+            x=star_x, y=star_y, mode="markers", customdata=star_data,
+            marker={"symbol": "star", "size": 13, "color": "#ffffff",
+                    "line": {"color": "#17212b", "width": 1.2}},
+            name="Apply selection", showlegend=False,
+            hovertemplate=("Cluster: %{customdata[0]}<br>Reference type: %{customdata[1]}"
+                           "<br>Apply annotation: %{customdata[2]}<extra></extra>"),
+        ), row=2, col=2,
+    )
     for leaves, distances in column_hierarchy.segments:
         figure.add_trace(
             go.Scatter(
@@ -102,6 +133,8 @@ def reference_correlation_figure(result: ReferenceAnnotationResult) -> go.Figure
         tickvals=x_positions,
         ticktext=reference_labels,
         tickangle=-35,
+        showticklabels=True,
+        automargin=True,
         row=2,
         col=2,
     )

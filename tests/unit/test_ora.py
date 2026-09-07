@@ -29,5 +29,11 @@ def test_ora_heatmap_clusters_pathways_and_source_clusters() -> None:
     assert figure.data[0].type == "heatmap"
     assert len(figure.data) == 1
     assert figure.layout.height == ora_heatmap_height(3)
-    assert figure.layout.xaxis.title.text == "Source cluster"
+    assert figure.layout.xaxis.title.text == "Cluster"
     assert figure.layout.yaxis.title.text == "Pathway"
+
+
+    relabeled = ora_heatmap_figure(result, labels={"a": "T cell", "b": "T cell"})
+    assert len(relabeled.data[0].x) == 2
+    assert list(relabeled.layout.xaxis.ticktext) == ["T cell", "T cell"]
+    assert result.values["cluster"].tolist() == ["0", "0", "1", "1"]

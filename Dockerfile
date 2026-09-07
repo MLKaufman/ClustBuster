@@ -18,16 +18,20 @@ ENV PATH=/opt/venv/bin:$PATH \
     CLUSTBUSTER_HOST=0.0.0.0 \
     CLUSTBUSTER_PORT=8000 \
     CLUSTBUSTER_WORKSPACE_ROOT=/workspace \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    CLUSTBUSTER_GENE_SET_CACHE_ROOT=/data/gene_sets
 RUN groupadd --system clustbuster \
     && useradd --system --gid clustbuster --home-dir /app clustbuster \
-    && mkdir -p /app /workspace \
-    && chown -R clustbuster:clustbuster /app /workspace
+    && mkdir -p /app /workspace /data/gene_sets \
+    && chown -R clustbuster:clustbuster /app /workspace /data
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=clustbuster:clustbuster resources /app/resources
+COPY scripts/container_entrypoint.py /usr/local/bin/clustbuster-entrypoint.py
 WORKDIR /app
 USER clustbuster
 EXPOSE 8000
+VOLUME ["/data/gene_sets"]
+ENTRYPOINT ["python", "/usr/local/bin/clustbuster-entrypoint.py"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)" || exit 1
 CMD ["shiny", "run", "--host", "0.0.0.0", "--port", "8000", "clustbuster.app:app"]

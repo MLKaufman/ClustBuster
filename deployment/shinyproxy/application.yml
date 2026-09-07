@@ -63,6 +63,8 @@ proxy:
       heartbeat-timeout: ${CLUSTBUSTER_IDLE_TIMEOUT_MS:900000}
       max-lifetime: ${CLUSTBUSTER_MAX_LIFETIME_MINUTES:480}
       stop-on-logout: true
+      container-volumes:
+        - "clustbuster-gene-sets:/data/gene_sets"
       container-env:
         CLUSTBUSTER_LOG_LEVEL: INFO
         CLUSTBUSTER_MAX_UPLOAD_MB: ${CLUSTBUSTER_MAX_UPLOAD_MB:2048}

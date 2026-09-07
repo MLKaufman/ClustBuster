@@ -116,3 +116,19 @@ def test_all_marker_heatmap_groups_cells_and_labels_marker_genes() -> None:
     assert [tick.get_text() for tick in figure.axes[0].get_xticklabels()] == ["a", "b"]
     assert [tick.get_text() for tick in figure.axes[0].get_yticklabels()] == ["CD3D", "LYZ"]
     assert figure.axes[0].images[0].get_rasterized() is True
+
+
+def test_all_marker_heatmap_sorts_numeric_labels_and_rotates_them() -> None:
+    adata = _adata()
+    adata.obs["cluster"] = ["10", "10", "10", "2", "2", "2"]
+    result = rank_all_markers(
+        adata, ExpressionSource.x(), "cluster", top_n_per_cluster=1,
+        min_fraction=0, min_log_fold_change=0,
+    )
+    figure = all_marker_heatmap_figure(adata, ExpressionSource.x(), "cluster", result)
+    ticks = figure.axes[0].get_xticklabels()
+    assert [tick.get_text() for tick in ticks] == ["2", "10"]
+    assert all(tick.get_rotation() == 90 for tick in ticks)
+    # The displayed cell blocks must move with their labels.
+    plotted = np.asarray(figure.axes[0].images[0].get_array())
+    assert plotted[0, :3].mean() < plotted[0, 3:].mean()

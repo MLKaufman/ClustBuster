@@ -9,8 +9,20 @@ from clustbuster.core.expression import DotPlotResult
 from clustbuster.plotting.hierarchy import cluster_hierarchy, standardize_columns
 
 
-def dotplot_figure(result: DotPlotResult) -> go.Figure:
+def dotplot_height(cluster_count: int) -> int:
+    return max(700, 48 * cluster_count + 240)
+
+
+def dotplot_width(gene_count: int) -> int:
+    return max(800, 48 * gene_count + 250)
+
+
+def dotplot_figure(result: DotPlotResult, labels: dict[str, str] | None = None) -> go.Figure:
     values = result.values.copy()
+    if labels is not None:
+        values["cluster_display"] = (
+            values["cluster_id"].map(labels).fillna(values["cluster_display"])
+        )
     cluster_ids = list(dict.fromkeys(values["cluster_id"].astype(str)))
     genes = list(dict.fromkeys(values["gene"].astype(str)))
     cluster_labels = (
@@ -58,7 +70,7 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
                 "<br>Mean: %{customdata[3]:.3g}<extra></extra>"
             ),
             marker={
-                "size": 6 + 28 * values["fraction_expressing"],
+                "size": 34 * values["fraction_expressing"].clip(lower=0, upper=1),
                 "color": values["mean_expression"],
                 "colorscale": "Viridis",
                 "showscale": True,
@@ -86,7 +98,8 @@ def dotplot_figure(result: DotPlotResult) -> go.Figure:
     cluster_count = len(ordered_cluster_ids)
     figure.update_layout(
         template="plotly_white",
-        height=min(1060, max(620, 28 * cluster_count + 240)),
+        height=dotplot_height(cluster_count),
+        width=dotplot_width(len(genes)),
         margin={"l": 120, "r": 95, "t": 30, "b": 120},
     )
     figure.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=2)

@@ -23,7 +23,7 @@ def test_workspace_sidebar_owns_branding_version_and_embedding_color_control() -
     assert "height:1160px; min-height:1160px" in html
     assert 'id="embedding_plot"' in html and "height:1160px" in html
     assert "cb-import-report html-fill-container" in html
-    assert 'id="dot_plot"' in html and "height:1100px" in html
+    assert 'id="dot_plot_container"' in html
     assert "#dataset_progress.shiny-file-input-progress { height:1.5rem" in html
     assert 'setInputValue("plot_refresh"' in html
     assert 'addEventListener("visibilitychange"' in html
@@ -84,7 +84,8 @@ def test_feature_and_dot_plots_update_without_run_buttons() -> None:
     assert html.count(default_genes) == 2
     assert "Plots update automatically when the gene list changes." in html
     assert "The dot plot updates automatically when the gene list changes." in html
-    assert 'id="feature_show_annotations"' in html
+    assert "Annotations to show" in html
+    assert "Annotation display" in html
 
 
 def test_module_scores_include_per_cell_violin_plot() -> None:
@@ -172,3 +173,29 @@ def test_marker_catalog_places_replacing_plot_area_below_loaded_list() -> None:
     assert "Use in feature plot" not in html
     assert "Use in dot plot" not in html
     assert 'id="reference_controls"' not in html
+
+
+def test_settings_owns_embedding_color_and_enrichment_mode() -> None:
+    html = _rendered_html()
+    settings = html.index('data-value="Settings"', html.index('data-value="Settings"') + 1)
+    assert settings < html.index('id="color_by"')
+    assert html.count('id="color_by"') == 1
+    assert 'id="enrichment_mode"' in html
+    assert 'id="offline_library"' in html
+    assert 'id="download_gene_library"' in html
+
+
+def test_default_enrichment_prefers_downloaded_valid_library(tmp_path) -> None:
+    from clustbuster.app import _default_enrichment_mode
+    from clustbuster.integrations.enrichr import DEFAULT_LIBRARY
+
+    assert _default_enrichment_mode(tmp_path) == "online"
+    library = tmp_path / f"{DEFAULT_LIBRARY}.gmt"
+    library.write_text("invalid download")
+    assert _default_enrichment_mode(tmp_path) == "online"
+    library.write_text("Pathway\t\tCD3D\tCD3E\n")
+    assert _default_enrichment_mode(tmp_path) == "offline"
+    library.unlink()
+    (tmp_path / "mouse").mkdir()
+    (tmp_path / "mouse" / library.name).write_text("Pathway\t\tCd3d\tCd3e\n")
+    assert _default_enrichment_mode(tmp_path) == "offline"

@@ -51,6 +51,10 @@ def test_dotplot_figure_maps_fraction_to_marker_size() -> None:
     figure = dotplot_figure(result)
     assert figure.data[0].type == "scatter"
     assert len(figure.data[0].marker.size) == 4
+    sizes = np.asarray(figure.data[0].marker.size)
+    fractions = result.values["fraction_expressing"].to_numpy()
+    assert (sizes[fractions == 0] == 0).all()
+    assert (sizes[fractions > 0] > 0).all()
     assert [trace.mode for trace in figure.data[1:]] == ["lines"]
     assert figure.layout.margin.l == 120
     assert figure.layout.margin.b == 120

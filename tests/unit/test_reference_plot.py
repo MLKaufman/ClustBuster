@@ -45,3 +45,25 @@ def test_reference_heatmap_clusters_both_axes_and_labels_matrix_side() -> None:
     assert figure.layout.yaxis3.showticklabels is True
     assert figure.layout.yaxis3.side == "left"
     assert set(figure.layout.yaxis3.ticktext) == {"0", "1", "2"}
+
+
+    stars = next(trace for trace in figure.data[1:] if trace.mode == "markers")
+    # All previews deliberately say Type A despite different row maxima.
+    assert len(stars.x) == 3
+    assert {row[1] for row in stars.customdata} == {"Type A"}
+    x_labels = dict(zip(figure.layout.xaxis3.tickvals, figure.layout.xaxis3.ticktext, strict=True))
+    y_labels = dict(zip(figure.layout.yaxis3.tickvals, figure.layout.yaxis3.ticktext, strict=True))
+    for x, y, row in zip(stars.x, stars.y, stars.customdata, strict=True):
+        assert x_labels[x] == row[1]
+        assert y_labels[y] == row[0]
+
+    result.predictions = (
+        PreviewedAnnotation("cluster-0", "0", "unassigned", 0.1, 0.0),
+        PreviewedAnnotation("cluster-1", "1", "Type A; Type B-CLASH!", 0.8, 0.0),
+        predictions[2],
+    )
+    figure = reference_correlation_figure(result)
+    stars = next(trace for trace in figure.data[1:] if trace.mode == "markers")
+    assert {(row[0], row[1]) for row in stars.customdata} == {
+        ("1", "Type A"), ("1", "Type B"), ("2", "Type A"),
+    }

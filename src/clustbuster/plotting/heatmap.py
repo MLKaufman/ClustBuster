@@ -9,7 +9,7 @@ from matplotlib.figure import Figure
 from plotly.subplots import make_subplots
 from scipy import sparse
 
-from clustbuster.core.annotations import ClusterIdentifier
+from clustbuster.core.annotations import ClusterIdentifier, _natural_cluster_key
 from clustbuster.core.expression import expression_matrix
 from clustbuster.core.markers import AllMarkerResult, MarkerResult
 from clustbuster.models import ExpressionSource
@@ -21,7 +21,11 @@ def marker_heatmap_height(cluster_count: int) -> int:
 
 
 def all_marker_heatmap_height(gene_count: int) -> int:
-    return min(1600, max(640, 18 * gene_count + 220))
+    return max(700, 24 * gene_count + 240)
+
+
+def all_marker_heatmap_width(cluster_count: int) -> int:
+    return max(1200, 48 * cluster_count + 240)
 
 
 def all_marker_heatmap_figure(
@@ -29,6 +33,7 @@ def all_marker_heatmap_figure(
     source: ExpressionSource,
     cluster_column: str,
     result: AllMarkerResult,
+    labels: dict[str, str] | None = None,
 ) -> Figure:
     """Build a static Seurat-style gene-by-cell heatmap grouped by source cluster."""
 
@@ -43,9 +48,14 @@ def all_marker_heatmap_figure(
     serialized = np.asarray(
         [ClusterIdentifier.from_value(value).serialized for value in raw_clusters], dtype=object
     )
-    cluster_rows = result.values.drop_duplicates("cluster_id", keep="first")
+    cluster_rows = result.values.drop_duplicates("cluster_id", keep="first").copy()
+    cluster_rows["_order"] = cluster_rows["cluster"].map(
+        lambda value: _natural_cluster_key(ClusterIdentifier.from_value(value))
+    )
+    cluster_rows = cluster_rows.sort_values("_order", kind="stable")
     cluster_ids = cluster_rows["cluster_id"].astype(str).tolist()
-    cluster_labels = cluster_rows["cluster"].astype(str).tolist()
+    cluster_labels = [(labels or {}).get(str(row.cluster_id), str(row.cluster))
+                      for row in cluster_rows.itertuples()]
     cell_groups = [np.flatnonzero(serialized == cluster_id) for cluster_id in cluster_ids]
     cell_order = np.concatenate(cell_groups)
     selected = matrix[cell_order, :][:, feature_indices]
@@ -62,7 +72,7 @@ def all_marker_heatmap_figure(
     scaled = np.clip(scaled, -2.5, 2.5)
 
     figure_height = max(6.4, all_marker_heatmap_height(len(genes)) / 100)
-    figure = Figure(figsize=(12, figure_height))
+    figure = Figure(figsize=(all_marker_heatmap_width(len(cluster_ids)) / 100, figure_height))
     heatmap_axes = figure.subplots()
     boundaries = np.cumsum([len(indices) for indices in cell_groups])
     starts = np.concatenate(([0], boundaries[:-1]))
@@ -77,7 +87,7 @@ def all_marker_heatmap_figure(
         rasterized=True,
     )
     heatmap_axes.set_yticks(np.arange(len(genes)), labels=genes, fontsize=8)
-    heatmap_axes.set_xticks(centers, labels=cluster_labels)
+    heatmap_axes.set_xticks(centers, labels=cluster_labels, rotation=90)
     heatmap_axes.xaxis.tick_top()
     heatmap_axes.tick_params(axis="x", length=0, pad=5)
     heatmap_axes.set_ylabel("Marker gene")
@@ -87,18 +97,19 @@ def all_marker_heatmap_figure(
     for boundary in boundaries[:-1]:
         heatmap_axes.axvline(boundary - 0.5, color="#263746", linewidth=0.65, alpha=0.8)
     figure.colorbar(image, ax=heatmap_axes, pad=0.012, label="Scaled expression")
-    figure.subplots_adjust(left=0.13, right=0.92, bottom=0.04, top=0.9)
+    figure.tight_layout(pad=1.5)
     return figure
 
 
-def marker_heatmap_figure(result: MarkerResult) -> go.Figure:
+def marker_heatmap_figure(result: MarkerResult, labels: dict[str, str] | None = None) -> go.Figure:
     standardized = standardize_columns(result.heatmap.to_numpy(dtype=float))
     row_hierarchy = cluster_hierarchy(standardized)
     column_hierarchy = cluster_hierarchy(standardized.T)
     row_order = list(row_hierarchy.order)
     column_order = list(column_hierarchy.order)
     ordered = standardized[np.ix_(row_order, column_order)]
-    cluster_labels = [str(result.heatmap.index[index]) for index in row_order]
+    cluster_labels = [(labels or {}).get(str(result.heatmap.index[index]),
+                                       str(result.heatmap.index[index])) for index in row_order]
     gene_labels = [str(result.heatmap.columns[index]) for index in column_order]
     x_positions = [5 + 10 * index for index in range(len(gene_labels))]
     y_positions = [5 + 10 * index for index in range(len(cluster_labels))]

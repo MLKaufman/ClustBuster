@@ -8,6 +8,8 @@ services:
       CLUSTBUSTER_MAX_UPLOAD_MB: 2048
       CLUSTBUSTER_ENABLE_SEURAT_IMPORT: 1
       CLUSTBUSTER_ENABLE_SCE_IMPORT: 1
+    volumes:
+      - gene-sets:/data/gene_sets
     tmpfs:
       # Shiny stages uploads in /tmp before ClustBuster copies them into the
       # session workspace. These limits accommodate the 1.9 GB stress fixture.
@@ -18,3 +20,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+volumes:
+  gene-sets:

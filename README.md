@@ -217,3 +217,53 @@ reference is synthetic and intended only to test the workflow with
 The adapter is pinned to pyclustifyr revision
 `db8761a87072b814f95ce7e0767540b4d10689bd`; API findings and current limitations
 are recorded in `docs/research/pyclustifyr.md`.
+
+## Online and offline enrichment
+
+Use **Settings → Enrichment method** to select Online (Enrichr) or
+Offline (local ORA). New sessions default to Offline when a valid default GO BP
+library is downloaded, and Online otherwise. Manual selections remain in effect
+for the session. The selection applies to both Top Markers enrichment and the
+all-cluster ORA tab for the current session. Changing mode clears previous enrichment
+results; run the analysis again to use the new method. **Annotations to show** is also
+in Settings.
+
+While connected, select each desired library in Settings and click **Download for
+offline use**. Once downloaded, offline analyses make no requests to Enrichr and
+send no marker lists to a remote service. The six supported libraries are GO BP/MF/CC
+2025, Reactome 2024, KEGG Human 2021, and MSigDB Hallmark 2020. Failed downloads leave
+existing valid GMT files intact. Downloads run in the background and the status panel
+reports errors without disconnecting the session.
+
+Libraries persist as GMT files in `resources/gene_sets/`; each download also records
+its source URL, UTC download time, term count, and SHA-256 in a JSON sidecar. Configure
+`CLUSTBUSTER_GENE_SET_CACHE_ROOT` to use a different persistent directory. On a fully
+air-gapped host, copy that directory from a connected installation. Mount a persistent
+cache into containers and set this variable to the mounted path. Libraries can be
+mounted read-only if downloading from the app is not needed. The cache files are
+ignored by Git and must be downloaded or staged on a fresh installation.
+
+Offline ORA uses SciPy's hypergeometric upper tail (equivalent to a one-sided Fisher
+exact test for over-representation). The background is the unique gene symbols in the
+active expression source, including genes with no annotation in the selected library.
+Each gene set and query is intersected with this background. Terms with no background
+genes are excluded; Benjamini–Hochberg adjustment covers all remaining terms, including
+terms with zero query overlap (p=1), before zero-overlap terms are omitted from display.
+Correction is performed separately for each cluster, as in the online workflow.
+
+The local background and correction scope may differ from Enrichr, so results need not
+match online results exactly. Settings detects human or mouse from exact symbol overlap with the downloaded
+species libraries (at least three informative symbols, 80% agreement). Ambiguous
+or mixed datasets require the Human/Mouse override. Symbols are never converted
+between species. Download libraries for both species to enable automatic detection.
+Mouse GO BP/MF/CC and Reactome use separate MSigDB 2025.1.Mm GMTs in the `mouse/`
+cache subdirectory; human libraries remain in the cache root. Source versions are
+recorded in download metadata and results. Mouse KEGG and Hallmark are unavailable;
+select GO or Reactome instead. MSigDB mouse Hallmark is ortholog-derived and is
+intentionally not offered. Upstream annotations can still include computationally
+inferred evidence; separate species libraries do not imply all annotations were
+experimentally established in that species. Ensembl IDs and aliases are not converted;
+use gene symbols as expression-source gene names. The offline engine
+reports raw and adjusted p-values, odds ratios, overlap genes and counts, and query,
+term, and background sizes. Enrichr's combined score is not calculated offline and is
+omitted from offline result tables. Mode/source labels remain attached to results.

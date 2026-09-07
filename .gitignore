@@ -15,3 +15,12 @@ deployment/.env.production
 deployment/certs/*.pem
 workspace/
 testdata/so-large.rds
+
+resources/gene_sets/*.gmt
+resources/gene_sets/*.json
+resources/gene_sets/*.tmp
+
+resources/atlas/
+resources/gene_sets/**/*.gmt
+resources/gene_sets/**/*.json
+resources/gene_sets/**/*.tmp

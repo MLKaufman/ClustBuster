@@ -17,7 +17,9 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
     clusters = workspace.adata.obs[workspace.cluster_column].tolist()
     records = [workspace.annotations.get(cluster) for cluster in clusters]
     source_labels = [record.cluster_id.display for record in records]
-    current_annotations = [record.annotation for record in records]
+    current_annotations = [
+        record.annotation.strip() or record.cluster_id.display for record in records
+    ]
     if color_by == "cluster":
         labels = source_labels
         overlay_labels = source_labels
@@ -49,7 +51,7 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
                 y=coordinates[indices, 1],
                 mode="markers",
                 name=label,
-                customdata=[[cell_ids[index], str(clusters[index])] for index in indices],
+                customdata=[[cell_ids[index], labels[index]] for index in indices],
                 hovertemplate="Cell: %{customdata[0]}<br>Cluster: %{customdata[1]}<extra></extra>",
                 marker={"size": 6, "opacity": 0.78},
             )

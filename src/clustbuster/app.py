@@ -15,18 +15,26 @@ from shinywidgets import output_widget, render_plotly
 
 from clustbuster import __version__
 from clustbuster.config import AppConfig
-from clustbuster.core.enrichment import AllClusterOraResult, EnrichmentError, EnrichmentResult
+from clustbuster.core.enrichment import (
+    AllClusterOraResult,
+    EnrichmentError,
+    EnrichmentProvider,
+    EnrichmentResult,
+)
 from clustbuster.core.expression import (
     DotPlotResult,
     ExpressionResult,
     aggregate_dotplot,
+    expression_matrix,
     extract_expression,
     parse_gene_list,
 )
 from clustbuster.core.markers import AllMarkerResult, MarkerResult, rank_all_markers, rank_markers
-from clustbuster.core.modules import MODULE_PRESETS, ModuleScoreResult, calculate_module_score
+from clustbuster.core.modules import ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
+from clustbuster.integrations.gene_species import MOUSE_LIBRARIES
+from clustbuster.integrations.offline_enrichment import GeneSetCache, OfflineEnrichmentClient
 from clustbuster.integrations.pyclustifyr import (
     SUPPORTED_METHODS,
     PyClustifyrAdapter,
@@ -42,18 +50,19 @@ from clustbuster.models import (
     ReferenceFilters,
     Workspace,
 )
-from clustbuster.plotting.dotplot import dotplot_figure
+from clustbuster.plotting.dotplot import dotplot_figure, dotplot_height, dotplot_width
 from clustbuster.plotting.embedding import embedding_figure
 from clustbuster.plotting.enrichment import enrichment_figure
 from clustbuster.plotting.feature import feature_gene_figure
 from clustbuster.plotting.heatmap import (
     all_marker_heatmap_figure,
     all_marker_heatmap_height,
+    all_marker_heatmap_width,
     marker_heatmap_figure,
     marker_heatmap_height,
 )
+from clustbuster.plotting.labels import annotation_labels
 from clustbuster.plotting.module import (
-    module_score_figure,
     module_score_static_figure,
     module_score_violin_figure,
 )
@@ -146,6 +155,7 @@ def _styles() -> ui.Tag:
         .cb-all-markers-stack { display:flex; flex-direction:column; gap:1rem;
                                 width:100%; padding-bottom:1rem; }
         .cb-all-markers-stack > * { flex:0 0 auto !important; margin-bottom:0 !important; }
+        #dot_plot_container { display:block; width:100%; flex:none !important; }
         #all_marker_heatmap_container { display:block; width:100%;
                                         flex:0 0 auto !important; }
         .cb-all-marker-heatmap-frame { display:block; width:100%; flex:none !important; }
@@ -208,10 +218,31 @@ def _plot_refresh_script() -> ui.Tag:
     )
 
 
+def _default_enrichment_mode(cache_root: Path) -> str:
+    """Prefer local analysis when the default library has been downloaded."""
+    for root in (cache_root, cache_root / "mouse"):
+        try:
+            GeneSetCache(root).load(DEFAULT_LIBRARY)
+        except EnrichmentError:
+            continue
+        return "offline"
+    return "online"
+
+
 def _square_module_output(output_id: str) -> ui.Tag:
     return ui.div(
-        output_widget(output_id, width="100%", height="100%", fill=False),
-        class_="cb-square-module",
+        ui.output_plot(output_id, width="100%", height="100%", fill=False),
+        class_="cb-catalog-module-frame",
+    )
+
+
+def _scrolling_plot_widget(output_id: str, height: int, width: int) -> ui.Tag:
+    return ui.div(
+        ui.div(
+            output_widget(output_id, width="100%", height=f"{height}px", fill=False),
+            style=f"height:{height}px; min-height:{height}px; min-width:{width}px;",
+        ),
+        style="width:100%; overflow-x:auto; flex:none;",
     )
 
 
@@ -219,6 +250,10 @@ def _catalog_plot_output(index: int, figure: Any, kind: str) -> ui.Tag:
     if hasattr(figure, "to_plotly_json"):
         # Plot builders grow with cluster count; never crop them to a fixed viewport.
         height = int(figure.layout.height or 700)
+        if kind == "dot":
+            return _scrolling_plot_widget(
+                f"catalog_widget_{index}", height, int(figure.layout.width or 800),
+            )
         return ui.div(
             output_widget(f"catalog_widget_{index}", width="100%", height=f"{height}px"),
             style=f"height:{height}px; min-height:{height}px;",
@@ -257,12 +292,7 @@ app_ui = ui.page_fillable(
                 placeholder="No dataset selected",
             ),
             ui.output_ui("import_panel"),
-            ui.input_select(
-                "color_by",
-                "Color embedding by",
-                {"cluster": "Source cluster", "annotation": "Current annotation"},
-                selected="cluster",
-            ),
+
             ui.output_ui("initialize_workspace_control"),
             width=330,
             open="desktop",
@@ -296,11 +326,6 @@ app_ui = ui.page_fillable(
                         placeholder="Comma, space, or newline separated",
                         rows=2,
                     ),
-                    ui.input_checkbox(
-                        "feature_show_annotations",
-                        "Show cluster annotations on plots",
-                        value=False,
-                    ),
                     ui.help_text("Plots update automatically when the gene list changes."),
                     fill=False,
                 ),
@@ -321,32 +346,19 @@ app_ui = ui.page_fillable(
                     fill=False,
                 ),
                 ui.output_ui("dotplot_feedback"),
-                output_widget("dot_plot", height="1100px"),
+                ui.output_ui("dot_plot_container"),
             ),
             ui.nav_panel(
                 "Module scores",
                 ui.div(
                     ui.card(
-                        ui.layout_columns(
-                            ui.input_select(
-                                "module_preset",
-                                "Gene-set preset",
-                                {
-                                    "custom": "Custom gene set",
-                                    **{preset.key: preset.label for preset in MODULE_PRESETS},
-                                },
-                                selected="t_cell",
-                            ),
-                            ui.input_text("module_name", "Score label", value="T cell module"),
-                            ui.input_action_button(
-                                "run_module", "Calculate score", class_="btn-primary"
-                            ),
-                            col_widths=(4, 5, 3),
+                        ui.input_action_button(
+                            "run_module", "Calculate score", class_="btn-primary"
                         ),
                         ui.input_text_area(
                             "module_genes",
                             "Genes",
-                            value="CD3D, IL7R",
+                            value="CD8A, CD8B, CD3D, CD3E, CD3G, TRAC",
                             placeholder="Comma, space, or newline separated",
                             rows=3,
                         ),
@@ -415,7 +427,7 @@ app_ui = ui.page_fillable(
                             ui.input_select(
                                 "marker_enrichment_library",
                                 "Gene-set library",
-                                {DEFAULT_LIBRARY: "GO Biological Process 2025"},
+                                _ORA_LIBRARIES,
                             ),
                             ui.input_numeric(
                                 "marker_enrichment_top_n",
@@ -432,9 +444,9 @@ app_ui = ui.page_fillable(
                             col_widths=(5, 3, 4),
                         ),
                         ui.help_text(
-                            "Uses the ranked marker genes above. Running enrichment sends only "
-                            "those gene symbols to the Ma'ayan Lab Enrichr service; expression "
-                            "values and cell metadata are not transmitted."
+                            "Uses the ranked marker genes above and the method chosen in Settings. "
+                            "Online mode sends gene symbols to Enrichr. Offline mode runs locally "
+                            "with a downloaded library."
                         ),
                         fill=False,
                     ),
@@ -546,7 +558,7 @@ app_ui = ui.page_fillable(
                         ui.help_text(
                             "Ranks positive markers one cluster versus all remaining cells, "
                             "then runs over-representation analysis separately for every source "
-                            "cluster. Only marker gene symbols are sent to Enrichr."
+                            "cluster using the method chosen in Settings."
                         ),
                         fill=False,
                     ),
@@ -661,6 +673,52 @@ app_ui = ui.page_fillable(
                     fill=False,
                 ),
             ),
+            ui.nav_panel(
+                "Settings",
+                ui.card(
+                    ui.card_header("Enrichment analysis"),
+                    ui.input_select(
+                        "enrichment_mode", "Enrichment method",
+                        {"online": "Online — Enrichr", "offline": "Offline — local ORA"},
+                        selected=_default_enrichment_mode(config.gene_set_cache_root),
+                    ),
+                    ui.help_text(
+                        "Applies to Top Markers enrichment and all-cluster ORA. "
+                        "Offline mode uses a downloaded library and the genes in the active "
+                        "expression source as background. It makes no enrichment network requests. "
+                        "P-values can differ from online Enrichr. "
+                        "Its combined score is unavailable offline. "
+                        "Changing mode clears existing enrichment results."
+                    ),
+                    ui.input_select("offline_species", "Dataset species (offline)",
+                                    {
+                                        "auto": "Detect automatically",
+                                        "human": "Human", "mouse": "Mouse",
+                                    }),
+                    ui.output_ui("offline_species_status"),
+                    ui.input_select("download_species", "Library species to download",
+                                    {"human": "Human", "mouse": "Mouse"}),
+                    ui.input_select("offline_library", "Library to download", _ORA_LIBRARIES),
+                    ui.input_action_button("download_gene_library", "Download for offline use"),
+                    ui.help_text(
+                        "Download each library once while connected, then use it offline. "
+                        "Mouse uses separate MSigDB mouse GO/Reactome libraries. "
+                        "Gene symbols are matched exactly; no homolog conversion is used."
+                    ),
+                    ui.output_ui("offline_library_status"),
+                    fill=False,
+                ),
+                ui.card(
+                    ui.card_header("Annotation display"),
+            ui.input_select(
+                "color_by",
+                "Annotations to show",
+                {"cluster": "Source cluster", "annotation": "Current annotation"},
+                selected="cluster",
+            ),
+                    fill=False,
+                ),
+            ),
             sidebar=ui.sidebar(
                 ui.div(
                     ui.download_button(
@@ -727,7 +785,120 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     enrichment_error = reactive.Value[str | None](None)
     ora_result = reactive.Value[AllClusterOraResult | None](None)
     ora_error = reactive.Value[str | None](None)
-    enrichment_client = EnrichrClient(timeout_seconds=config.enrichment_timeout_seconds)
+    gene_set_cache = GeneSetCache(config.gene_set_cache_root)
+
+    enrichment_mode_initialized = False
+
+    @reactive.effect
+    @reactive.event(input.enrichment_mode)
+    def initialize_enrichment_mode() -> None:
+        nonlocal enrichment_mode_initialized
+        if enrichment_mode_initialized:
+            return
+        enrichment_mode_initialized = True
+        ui.update_select(
+            "enrichment_mode", selected=_default_enrichment_mode(config.gene_set_cache_root),
+            session=session,
+        )
+
+    gene_set_cache_revision = reactive.Value(0)
+
+    @reactive.extended_task
+    async def download_offline_library(library: str, species: str) -> tuple[str, int]:
+        count = await asyncio.to_thread(gene_set_cache.download, library, species=species)
+        return library, count
+
+    session.on_ended(download_offline_library.cancel)
+
+    @reactive.effect
+    @reactive.event(input.download_species)
+    def update_download_libraries() -> None:
+        choices = {
+            key: (label if input.download_species() == "human" else
+                  f"{MOUSE_LIBRARIES[key]} (MSigDB 2025.1.Mm)")
+            for key, label in _ORA_LIBRARIES.items()
+            if input.download_species() == "human" or key in MOUSE_LIBRARIES
+        }
+        ui.update_select("offline_library", choices=choices, session=session)
+
+    @reactive.effect
+    @reactive.event(input.download_gene_library)
+    def request_offline_library_download() -> None:
+        if download_offline_library.status() != "running":
+            download_offline_library(str(input.offline_library()), str(input.download_species()))
+
+    @reactive.effect
+    @reactive.event(download_offline_library.status)
+    def finish_offline_library_download() -> None:
+        if download_offline_library.status() != "success":
+            return
+        try:
+            library, count = download_offline_library.result()
+        except Exception:
+            return  # The status output displays the download error.
+        gene_set_cache_revision.set(gene_set_cache_revision.get() + 1)
+        ui.notification_show(f"{library}: {count:,} entries ready offline", session=session)
+
+    @output
+    @render.ui
+    def offline_library_status() -> ui.TagChild:
+        gene_set_cache_revision.get()
+        status = download_offline_library.status()
+        message: ui.TagChild = ui.div()
+        if status == "running":
+            message = ui.p("Downloading gene-set library…")
+        elif status == "error":
+            try:
+                download_offline_library.result()
+            except Exception as exc:
+                message = ui.div(str(exc), class_="alert alert-warning")
+        return ui.div(
+            message,
+            ui.tags.ul(*(ui.tags.li(
+                f"{label if input.download_species() == 'human' else MOUSE_LIBRARIES[library]}: "
+                + ("Available offline" if GeneSetCache(
+                    gene_set_cache.root / ("mouse" if input.download_species() == "mouse" else "")
+                ).path(library).is_file()
+                               else "Not downloaded")
+            ) for library, label in _ORA_LIBRARIES.items()
+                if input.download_species() == "human" or library in MOUSE_LIBRARIES)),
+        )
+
+    def enrichment_provider(library: str) -> EnrichmentProvider:
+        if str(input.enrichment_mode()) == "offline":
+            current = workspace.get()
+            if current is None:
+                raise EnrichmentError("Configure a workspace before running offline enrichment")
+            _, names = expression_matrix(current.adata, current.expression_source)
+            return OfflineEnrichmentClient(
+                gene_set_cache, library, tuple(names.astype(str)), str(input.offline_species()),
+            )
+        return EnrichrClient(library=library, timeout_seconds=config.enrichment_timeout_seconds)
+
+    @output
+    @render.ui
+    def offline_species_status() -> ui.TagChild:
+        gene_set_cache_revision.get()
+        if str(input.enrichment_mode()) != "offline" or workspace.get() is None:
+            return ui.p("Load a dataset and select Offline to check species and gene matching.")
+        try:
+            client = enrichment_provider(str(input.offline_library()))
+            assert isinstance(client, OfflineEnrichmentClient)
+            matched = len(set().union(*client.terms.values()))
+            return ui.p(
+                f"Species: {client.species}. {len(client.background):,} unique background genes; "
+                f"{matched:,} match the selected library."
+            )
+        except EnrichmentError as exc:
+            return ui.p(str(exc), class_="text-warning")
+
+    @reactive.effect
+    @reactive.event(input.enrichment_mode, input.offline_species, gene_set_cache_revision)
+    def reset_enrichment_mode() -> None:
+        enrichment_result.set(None)
+        enrichment_error.set(None)
+        ora_result.set(None)
+        ora_error.set(None)
     marker_provider = marker_provider_from_config(config)
     reference_provider = reference_provider_from_config(config)
     reference_adapter = PyClustifyrAdapter()
@@ -1097,17 +1268,29 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     registered_feature_plots: set[int] = set()
 
+    def plot_labels() -> dict[str, str]:
+        revision.get()
+        current = workspace.get()
+        return annotation_labels(current, str(input.color_by())) if current is not None else {}
+
+    def plot_display_labels() -> dict[str, str]:
+        labels = plot_labels()
+        current = workspace.get()
+        if current is not None:
+            labels.update({record.cluster_id.display: labels[record.cluster_id.serialized]
+                           for record in current.annotations.records()})
+        return labels
+
     def feature_annotation_overlays(
         current: Workspace, coordinates: np.ndarray
     ) -> tuple[tuple[float, float, str], ...]:
         assert current.cluster_column is not None
         groups: dict[str, list[int]] = {}
-        labels: dict[str, str] = {}
+        labels = plot_labels()
         for index, raw_cluster in enumerate(current.adata.obs[current.cluster_column].tolist()):
             record = current.annotations.get(raw_cluster)
             cluster_id = record.cluster_id.serialized
             groups.setdefault(cluster_id, []).append(index)
-            labels[cluster_id] = record.annotation
         return tuple(
             (
                 float(np.median(coordinates[indices, 0])),
@@ -1138,9 +1321,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             gene = str(result.values.columns[index])
             coordinates = np.asarray(current.adata.obsm[current.embedding_key])
             annotations: tuple[tuple[float, float, str], ...] = ()
-            if bool(input.feature_show_annotations()):
-                revision.get()
-                annotations = feature_annotation_overlays(current, coordinates)
+            annotations = feature_annotation_overlays(current, coordinates)
             return feature_gene_figure(
                 coordinates,
                 gene,
@@ -1240,13 +1421,24 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     @output
+    @render.ui
+    def dot_plot_container() -> ui.TagChild:
+        result = dotplot_result.get()
+        if result is None:
+            return ui.div()
+        return _scrolling_plot_widget(
+            "dot_plot", dotplot_height(result.values["cluster_id"].nunique()),
+            dotplot_width(result.values["gene"].nunique()),
+        )
+
+    @output
     @render_plotly
     def dot_plot() -> Any:
         input.plot_refresh()
         result = dotplot_result.get()
         req(result is not None)
         assert result is not None
-        return dotplot_figure(result)
+        return dotplot_figure(result, plot_labels())
 
     @output
     @render.ui
@@ -1486,6 +1678,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
 
     catalog_plots = reactive.Value[list[Any]]([])
+    catalog_plotted_genes = reactive.Value[tuple[str, ...]](())
+    catalog_module_result = reactive.Value[ModuleScoreResult | None](None)
     catalog_plot_error = reactive.Value[str | None](None)
     catalog_plot_missing = reactive.Value[tuple[str, ...]](())
     registered_catalog_plots: set[int] = set()
@@ -1494,6 +1688,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     def reset_catalog_plots() -> None:
         catalog_plots.set([])
+        catalog_module_result.set(None)
         catalog_plot_error.set(None)
         catalog_plot_missing.set(())
         catalog_plot_kind.set("")
@@ -1517,8 +1712,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
         registered_catalog_plots.add(index)
 
-    def plot_catalog(kind: str) -> None:
+    def plot_catalog(kind: str, plotted_genes: tuple[str, ...] | None = None) -> None:
         catalog_plots.set([])
+        catalog_module_result.set(None)
         catalog_plot_error.set(None)
         catalog_plot_missing.set(())
         try:
@@ -1527,7 +1723,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             if current is None or not configured.get():
                 raise ValueError("Import and configure a workspace before plotting.")
             assert current.cluster_column is not None and current.embedding_key is not None
-            genes = selected_catalog_genes(marker_set)
+            genes = (selected_catalog_genes(marker_set)
+                     if plotted_genes is None else plotted_genes)
             if not genes:
                 raise ValueError("Select at least one gene in the marker list before plotting.")
             coordinates = np.asarray(current.adata.obsm[current.embedding_key])
@@ -1536,7 +1733,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 expression = extract_expression(current.adata, current.expression_source, genes)
                 report = expression.report
                 plots = [
-                    feature_gene_figure(coordinates, str(gene), expression.values[gene].to_numpy())
+                    feature_gene_figure(
+                        coordinates, str(gene), expression.values[gene].to_numpy(),
+                        feature_annotation_overlays(current, coordinates),
+                    )
                     for gene in expression.values.columns
                 ]
                 for index in range(len(plots)):
@@ -1546,10 +1746,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     current.adata, current.expression_source, current.cluster_column,
                     genes, name=marker_set.cell_type,
                 )
+                catalog_module_result.set(module)
                 report = module.report
                 plots = [
-                    module_score_static_figure(coordinates, module),
-                    module_score_violin_figure(module),
+                    module_score_static_figure(
+                        coordinates, module, feature_annotation_overlays(current, coordinates),
+                    ),
+                    module_score_violin_figure(module, plot_labels()),
                 ]
             else:
                 dots = aggregate_dotplot(
@@ -1557,7 +1760,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 )
                 report = dots.report
                 if kind == "dot":
-                    plots = [dotplot_figure(dots)]
+                    plots = [dotplot_figure(dots, plot_labels())]
                 else:
                     means = dots.values.pivot(
                         index="cluster_id", columns="gene", values="mean_expression"
@@ -1565,11 +1768,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     labels = dots.values.drop_duplicates("cluster_id").set_index("cluster_id")
                     means.index = labels.loc[means.index, "cluster_display"].astype(str)
                     figure = marker_heatmap_figure(
-                        MarkerResult(marker_set.cell_type, "catalog", pd.DataFrame(), means)
+                        MarkerResult(marker_set.cell_type, "catalog", pd.DataFrame(), means),
+                        plot_display_labels(),
                     )
                     figure.update_layout(title=f"{marker_set.cell_type} marker expression")
                     plots = [figure]
             catalog_plot_missing.set((*report.missing, *report.ambiguous))
+            catalog_plotted_genes.set(genes)
             catalog_plot_kind.set(kind)
             catalog_plots.set(plots)
         except Exception as exc:
@@ -1589,6 +1794,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive.event(input.use_markers_module)
     def plot_catalog_module() -> None:
         plot_catalog("module")
+
+    @reactive.effect
+    @reactive.event(input.color_by, revision, ignore_init=True)
+    def refresh_catalog_annotation_labels() -> None:
+        kind = catalog_plot_kind.get()
+        if kind and catalog_plots.get():
+            plot_catalog(kind, catalog_plotted_genes.get())
 
     @reactive.effect
     @reactive.event(input.use_markers_heatmap)
@@ -1614,7 +1826,25 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 _catalog_plot_output(index, figure, catalog_plot_kind.get())
                 for index, figure in enumerate(catalog_plots.get())
             ),
+            *(
+                [ui.card(ui.card_header("Cluster summary"),
+                         ui.output_data_frame("catalog_module_summary"), fill=False)]
+                if catalog_plot_kind.get() == "module" and catalog_plots.get() else []
+            ),
             class_="cb-catalog-plot-stack",
+        )
+
+    @output
+    @render.data_frame
+    def catalog_module_summary() -> pd.DataFrame:
+        result = catalog_module_result.get()
+        req(result is not None and catalog_plot_kind.get() == "module")
+        assert result is not None
+        summary = result.cluster_summary.copy()
+        summary["cluster"] = summary["cluster_id"].map(plot_labels()).fillna(summary["cluster"])
+        return summary[["cluster", "cells", "mean_score", "median_score"]].rename(
+            columns={"cluster": "Cluster", "cells": "Cells", "mean_score": "Mean score",
+                     "median_score": "Median score"}
         )
 
     @output
@@ -1845,7 +2075,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = reference_annotation_result.get()
         req(result is not None)
         assert result is not None
-        return reference_correlation_figure(result)
+        return reference_correlation_figure(result, plot_labels())
 
     @output
     @render.data_frame
@@ -1891,18 +2121,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.notification_show(str(exc), type="error", duration=8, session=session)
 
     @reactive.effect
-    @reactive.event(input.module_preset, ignore_init=True)
-    def apply_module_preset() -> None:
-        selected = str(input.module_preset())
-        if selected == "custom":
-            return
-        preset = next((item for item in MODULE_PRESETS if item.key == selected), None)
-        if preset is None:
-            return
-        ui.update_text_area("module_genes", value=", ".join(preset.genes), session=session)
-        ui.update_text("module_name", value=f"{preset.label} module", session=session)
-
-    @reactive.effect
     @reactive.event(input.run_module)
     def run_module_score() -> None:
         current = workspace.get()
@@ -1916,7 +2134,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 current.expression_source,
                 current.cluster_column,
                 genes,
-                name=str(input.module_name()),
+                name="Gene-set module score",
             )
             module_score_result.set(result)
         except Exception as exc:
@@ -1940,16 +2158,15 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return ui.div(message, class_="alert alert-success")
 
     @output
-    @render_plotly
+    @render.plot(width=1000, height=1000, alt="Module-score UMAP")
     def module_plot() -> Any:
-        input.plot_refresh()
         current = workspace.get()
         result = module_score_result.get()
         req(current is not None and configured.get() and result is not None)
         assert current is not None and result is not None and current.embedding_key is not None
         coordinates = np.asarray(current.adata.obsm[current.embedding_key])
-        return module_score_figure(
-            coordinates, current.adata.obs_names.astype(str).tolist(), result
+        return module_score_static_figure(
+            coordinates, result, feature_annotation_overlays(current, coordinates),
         )
 
     @output
@@ -1959,7 +2176,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = module_score_result.get()
         req(result is not None)
         assert result is not None
-        return module_score_violin_figure(result)
+        return module_score_violin_figure(result, plot_labels())
 
     @output
     @render.data_frame
@@ -1967,7 +2184,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = module_score_result.get()
         req(result is not None)
         assert result is not None
-        summary = result.cluster_summary[["cluster", "cells", "mean_score", "median_score"]]
+        summary = result.cluster_summary.copy()
+        summary["cluster"] = summary["cluster_id"].map(plot_labels()).fillna(summary["cluster"])
+        summary = summary[["cluster", "cells", "mean_score", "median_score"]]
         return summary.rename(
             columns={
                 "cluster": "Cluster",
@@ -2065,7 +2284,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = marker_result.get()
         req(result is not None)
         assert result is not None
-        return marker_heatmap_figure(result)
+        return marker_heatmap_figure(result, plot_display_labels())
 
     @reactive.effect
     @reactive.event(input.run_all_markers)
@@ -2122,10 +2341,15 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             return ui.div()
         gene_count = result.values["gene"].nunique()
         height = all_marker_heatmap_height(gene_count)
+        width = all_marker_heatmap_width(result.values["cluster_id"].nunique())
         return ui.div(
-            ui.output_plot("all_marker_heatmap", width="100%", height=f"{height}px"),
-            class_="cb-all-marker-heatmap-frame",
-            style=f"height:{height}px; min-height:{height}px;",
+            ui.div(
+                ui.output_plot("all_marker_heatmap", width="100%", height=f"{height}px",
+                               fill=False),
+                class_="cb-all-marker-heatmap-frame",
+                style=f"height:{height}px; min-height:{height}px; min-width:{width}px;",
+            ),
+            style="width:100%; overflow-x:auto; flex:none;",
         )
 
     @output
@@ -2145,6 +2369,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             current.expression_source,
             current.cluster_column,
             result,
+            plot_labels(),
         )
 
     @output
@@ -2186,9 +2411,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         enrichment_error.set(None)
         genes = tuple(markers.values["gene"].astype(str))
         with ui.Progress(min=0, max=1, session=session) as progress:
-            progress.set(0.15, message="Submitting marker genes to Enrichr")
+            progress.set(0.15, message="Running marker enrichment")
             try:
-                result = enrichment_client.enrich(
+                result = enrichment_provider(str(input.marker_enrichment_library())).enrich(
                     genes,
                     description=f"ClustBuster cluster {markers.selected_cluster} markers",
                 )
@@ -2240,6 +2465,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "overlap_genes",
             ]
         ].copy()
+        if table["combined_score"].isna().all():
+            table = table.drop(columns="combined_score")
         return table.rename(
             columns={
                 "rank": "Rank",
@@ -2287,10 +2514,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     min_log_fold_change=float(input.ora_min_logfc()),
                 )
                 library = str(input.ora_library())
-                client = EnrichrClient(
-                    library=library,
-                    timeout_seconds=config.enrichment_timeout_seconds,
-                )
+                client = enrichment_provider(library)
                 grouped = list(markers.values.groupby("cluster_id", sort=False))
                 frames: list[pd.DataFrame] = []
                 failures = list(markers.failures)
@@ -2324,7 +2548,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 ora_result.set(
                     AllClusterOraResult(
                         library=library,
-                        source="Enrichr",
+                        source=enrichment.source,
                         markers=markers.values,
                         values=combined,
                         failures=tuple(failures),
@@ -2353,7 +2577,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         )
         return ui.div(
             ui.strong(
-                f"{cluster_count} clusters · {len(result.markers)} markers · "
+                f"{result.source} · {cluster_count} clusters · {len(result.markers)} markers · "
                 f"{result.values['term'].nunique()} pathways"
             ),
             warning_list,
@@ -2381,7 +2605,9 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = ora_result.get()
         req(result is not None)
         assert result is not None
-        return ora_heatmap_figure(result, top_n_pathways=int(input.ora_pathway_top_n()))
+        return ora_heatmap_figure(
+            result, top_n_pathways=int(input.ora_pathway_top_n()), labels=plot_labels(),
+        )
 
     @output
     @render.data_frame
@@ -2417,7 +2643,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         result = ora_result.get()
         req(result is not None)
         assert result is not None
-        return result.values[
+        table = result.values[
             [
                 "cluster",
                 "rank",
@@ -2427,7 +2653,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 "combined_score",
                 "overlap_genes",
             ]
-        ].rename(
+        ].copy()
+        if table["combined_score"].isna().all():
+            table = table.drop(columns="combined_score")
+        return table.rename(
             columns={
                 "cluster": "Source cluster",
                 "rank": "Rank",
