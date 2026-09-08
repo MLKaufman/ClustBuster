@@ -1,6 +1,8 @@
 # ClustBuster
 
-![ClustBuster logo](img/clustbuster-logo.png)
+<p align="center">
+  <img src="src/clustbuster/www/clustbuster-logo.png" alt="ClustBuster logo" width="360">
+</p>
 
 ClustBuster is a Python-first web application for assisted annotation of
 single-cell RNA-sequencing clusters. The current Python-native application supports
