@@ -531,7 +531,7 @@ app_ui = ui.page_fillable(
                             ),
                             ui.input_numeric(
                                 "ora_min_fraction",
-                                "Minimum expressing fraction",
+                                "Min. expressing fraction",
                                 value=0.1,
                                 min=0,
                                 max=1,
