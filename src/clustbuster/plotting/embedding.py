@@ -10,7 +10,9 @@ import plotly.graph_objects as go
 from clustbuster.models import Workspace
 
 
-def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.Figure:
+def embedding_figure(
+    workspace: Workspace, *, color_by: str = "annotation", show_annotations: bool = True,
+) -> go.Figure:
     if workspace.cluster_column is None or workspace.embedding_key is None:
         raise ValueError("The workspace must have a cluster column and embedding")
     coordinates = np.asarray(workspace.adata.obsm[workspace.embedding_key])
@@ -57,6 +59,8 @@ def embedding_figure(workspace: Workspace, *, color_by: str = "cluster") -> go.F
             )
         )
     for cluster_key, indices in cluster_indices.items():
+        if not show_annotations:
+            continue
         figure.add_annotation(
             x=float(np.median(coordinates[indices, 0])),
             y=float(np.median(coordinates[indices, 1])),

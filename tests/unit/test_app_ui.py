@@ -199,3 +199,12 @@ def test_default_enrichment_prefers_downloaded_valid_library(tmp_path) -> None:
     (tmp_path / "mouse").mkdir()
     (tmp_path / "mouse" / library.name).write_text("Pathway\t\tCd3d\tCd3e\n")
     assert _default_enrichment_mode(tmp_path) == "offline"
+
+
+def test_umap_annotation_toggle_is_below_reinitialize_control() -> None:
+    html = _rendered_html()
+    assert html.index('id="initialize_workspace_control"') < html.index(
+        'id="show_umap_annotations"'
+    )
+    assert 'Show UMAP annotations' in html
+    assert '<option value="annotation" selected="">Current annotation</option>' in html

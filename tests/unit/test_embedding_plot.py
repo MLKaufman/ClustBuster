@@ -68,3 +68,13 @@ def test_embedding_can_color_by_current_annotations() -> None:
     assert [item.text for item in figure.layout.annotations] == ["T cell", "b"]
     assert all(item.font.size == 15 for item in figure.layout.annotations)
     assert all(item.font.weight == 700 for item in figure.layout.annotations)
+
+
+def test_annotation_default_and_overlay_toggle_preserve_point_colors() -> None:
+    workspace = _workspace()
+    workspace.annotations.assign("a", "CD8 T cell")
+    shown = embedding_figure(workspace)
+    hidden = embedding_figure(workspace, show_annotations=False)
+    assert [item.text for item in shown.layout.annotations] == ["CD8 T cell", "b"]
+    assert not hidden.layout.annotations
+    assert shown.to_json().split('"layout"')[0] == hidden.to_json().split('"layout"')[0]

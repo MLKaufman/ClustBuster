@@ -294,6 +294,7 @@ app_ui = ui.page_fillable(
             ui.output_ui("import_panel"),
 
             ui.output_ui("initialize_workspace_control"),
+            ui.input_switch("show_umap_annotations", "Show UMAP annotations", value=True),
             width=330,
             open="desktop",
         ),
@@ -714,7 +715,7 @@ app_ui = ui.page_fillable(
                 "color_by",
                 "Annotations to show",
                 {"cluster": "Source cluster", "annotation": "Current annotation"},
-                selected="cluster",
+                selected="annotation",
             ),
                     fill=False,
                 ),
@@ -1223,8 +1224,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         req(current is not None and configured.get())
         assert current is not None
         revision.get()
-        color_by = str(input.color_by()) if input.color_by() else "cluster"
-        return embedding_figure(current, color_by=color_by)
+        color_by = str(input.color_by()) if input.color_by() else "annotation"
+        return embedding_figure(
+            current, color_by=color_by, show_annotations=bool(input.show_umap_annotations()),
+        )
 
     @output
     @render.ui
@@ -1284,6 +1287,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     def feature_annotation_overlays(
         current: Workspace, coordinates: np.ndarray
     ) -> tuple[tuple[float, float, str], ...]:
+        if not bool(input.show_umap_annotations()):
+            return ()
         assert current.cluster_column is not None
         groups: dict[str, list[int]] = {}
         labels = plot_labels()
@@ -1796,7 +1801,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         plot_catalog("module")
 
     @reactive.effect
-    @reactive.event(input.color_by, revision, ignore_init=True)
+    @reactive.event(input.color_by, input.show_umap_annotations, revision, ignore_init=True)
     def refresh_catalog_annotation_labels() -> None:
         kind = catalog_plot_kind.get()
         if kind and catalog_plots.get():
