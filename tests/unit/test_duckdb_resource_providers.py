@@ -175,3 +175,23 @@ def test_duckdb_marker_search_matches_all_fields(tmp_path: Path, query: str) -> 
     assert [item.cell_type for item in results] == ["T cell"]
     assert provider.search_cell_types(query, tissue="missing") == []
     assert provider.search_cell_types("' OR 1=1 --") == []
+
+
+def test_reference_metadata_is_exposed_without_requiring_new_columns(tmp_path: Path) -> None:
+    files = tmp_path / 'files'
+    files.mkdir()
+    catalog = tmp_path / 'references.duckdb'
+    matrix_id, _ = _reference_catalog(catalog, files)
+    with duckdb.connect(str(catalog)) as connection:
+        connection.execute('ALTER TABLE reference_matrices ADD COLUMN description VARCHAR')
+        connection.execute('ALTER TABLE reference_matrices ADD COLUMN submitter VARCHAR')
+        connection.execute(
+            "UPDATE reference_matrices SET description='Adult immune atlas', submitter='Alice'"
+        )
+    provider = DuckDbReferenceProvider(catalog, files)
+    summary = provider.list_references(ReferenceFilters())[0]
+    assert summary.cell_types == ('T cell', 'B cell')
+    assert summary.metadata['description'] == 'Adult immune atlas'
+    assert summary.metadata['submitter'] == 'Alice'
+    assert summary.metadata['limitations'] is None
+    assert provider.load_reference(matrix_id).metadata['description'] == 'Adult immune atlas'

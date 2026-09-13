@@ -35,3 +35,12 @@ revision, gene overlap, and that `adata.obs` remains unchanged.
   the user. When enabled, sparse values are back-transformed before averaging and the
   cluster means are transformed with `log1p`, matching pyclustifyr's mean-pseudobulk
   behavior.
+
+
+Dependency update (2026-09-10): ClustBuster now pins upstream main commit
+`abb44aa9047622f2f98cb962bb4711635b2bd70c` (still package version `0.1.0`).
+The earlier audit above describes the original pinned revision.
+
+Dependency update (2026-09-12): upgraded to pyclustifyr `1.0.0`, tagged `v1.0.0`
+at commit `ea5ee58ac3702d49ab873b65691513996b2d2cb0`. The version requirement and
+commit pin both identify this release.

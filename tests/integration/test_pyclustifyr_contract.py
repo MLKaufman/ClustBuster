@@ -49,7 +49,7 @@ def test_pyclustifyr_contract_recovers_demo_clusters_without_mutating_obs() -> N
     ]
     assert result.correlations.shape == (5, 5)
     assert len(result.matched_genes) == 10
-    assert result.package_version == "0.1.0"
+    assert result.package_version == "1.0.0"
     assert result.package_revision == PYCLUSTIFYR_REVISION
     pd.testing.assert_frame_equal(workspace.adata.obs, before)
 

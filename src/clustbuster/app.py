@@ -7,6 +7,7 @@ import logging
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -33,7 +34,7 @@ from clustbuster.core.markers import AllMarkerResult, MarkerResult, rank_all_mar
 from clustbuster.core.modules import ModuleScoreResult, calculate_module_score
 from clustbuster.core.workspace import workspace_from_import
 from clustbuster.integrations.enrichr import DEFAULT_LIBRARY, EnrichrClient
-from clustbuster.integrations.gene_species import MOUSE_LIBRARIES
+from clustbuster.integrations.gene_species import MOUSE_LIBRARIES, detect_species
 from clustbuster.integrations.offline_enrichment import GeneSetCache, OfflineEnrichmentClient
 from clustbuster.integrations.pyclustifyr import (
     SUPPORTED_METHODS,
@@ -75,8 +76,15 @@ from clustbuster.resources.providers import (
     marker_provider_from_config,
     reference_provider_from_config,
 )
+from clustbuster.resources.references.details import (
+    cell_type_table,
+    reference_compatibility,
+    reference_label,
+    search_references,
+)
 from clustbuster.services.exports import WorkspaceExportService
 from clustbuster.services.imports import ImportService, SessionFiles
+from clustbuster.services.reference_uploads import import_reference_upload
 from clustbuster.services.workspaces import configure_workspace
 
 config = AppConfig.from_env()
@@ -609,10 +617,63 @@ app_ui = ui.page_fillable(
                 ui.div(
                     ui.card(
                         ui.card_header("Reference-based cluster annotation"),
+                        ui.input_radio_buttons(
+                            "refmat_source", "Reference source",
+                            {"catalog": "Reference catalog", "upload": "Upload your own"},
+                            selected="catalog", inline=True,
+                        ),
+                        ui.panel_conditional(
+                            "input.refmat_source === 'upload'",
+                            ui.input_file(
+                                "refmat_upload", "Reference matrix",
+                                accept=[".csv", ".tsv", ".txt"],
+                            ),
+                            ui.input_text(
+                                "refmat_upload_name", "Reference name (optional)", update_on="blur",
+                            ),
+                            ui.input_select("refmat_upload_species", "Reference species",
+                                            {"Unknown": "Unknown", "Homo sapiens": "Human",
+                                             "Mus musculus": "Mouse", "Other": "Other"}),
+                            ui.input_text(
+                                "refmat_upload_tissue", "Tissue (optional)", update_on="blur",
+                            ),
+                            ui.input_text(
+                                "refmat_upload_normalization", "Normalization (optional)",
+                                update_on="blur",
+                            ),
+                            ui.input_action_button(
+                                "import_refmat_upload", "Validate uploaded reference",
+                            ),
+                            ui.help_text(
+                                "CSV or tab-delimited TSV/TXT: gene names in the first column, "
+                                "cell types in the remaining column headers, "
+                                "numeric expression values. "
+                                "Genes and cell-type names must be unique. "
+                                "Stored only for this session."
+                            ),
+                            ui.output_ui("refmat_upload_status"),
+                        ),
+                        ui.input_text(
+                            "refmat_search", "Search references and cell types",
+                            placeholder="e.g. fibroblast, mouse mammary, or study name",
+                        ),
+                        ui.output_ui("refmat_search_status"),
                         ui.output_ui("reference_annotation_controls"),
                         ui.help_text(
                             "Scoring runs locally with pyclustifyr. Results remain a preview "
                             "until you explicitly apply them to the current annotation state."
+                        ),
+                        fill=False,
+                    ),
+                    ui.card(
+                        ui.card_header("Selected reference"),
+                        ui.output_ui("refmat_details"),
+                        ui.input_text("refmat_cell_search", "Find a cell type in this reference"),
+                        ui.output_data_frame("refmat_cell_types"),
+                        ui.output_ui("refmat_compatibility_status"),
+                        ui.tags.details(
+                            ui.tags.summary("Gene compatibility report"),
+                            ui.output_data_frame("refmat_gene_matches"),
                         ),
                         fill=False,
                     ),
@@ -1875,6 +1936,278 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             return None
         return plots[1]
 
+    uploaded_refmat = reactive.Value[LoadedReference | None](None)
+    refmat_upload_generation = reactive.Value(0)
+
+    @reactive.extended_task
+    async def validate_refmat_upload(
+        generation: int, upload: dict[str, Any], metadata: dict[str, str],
+    ) -> Any:
+        try:
+            reference = await asyncio.to_thread(
+                import_reference_upload, upload, session_files,
+                max_upload_mb=config.max_upload_mb, **metadata,
+            )
+            return generation, reference, None
+        except Exception as exc:
+            return generation, None, str(exc)
+
+    session.on_ended(validate_refmat_upload.cancel)
+
+    @reactive.effect
+    @reactive.event(input.refmat_upload)
+    def clear_replaced_refmat_upload() -> None:
+        validate_refmat_upload.cancel()
+        refmat_upload_generation.set(refmat_upload_generation.get() + 1)
+        uploaded_refmat.set(None)
+
+    @reactive.effect
+    @reactive.event(input.import_refmat_upload)
+    def import_custom_refmat() -> None:
+        files = input.refmat_upload()
+        if not files:
+            ui.notification_show("Choose a reference file first.", type="warning", session=session)
+            return
+        validate_refmat_upload.cancel()
+        generation = refmat_upload_generation.get() + 1
+        refmat_upload_generation.set(generation)
+        uploaded_refmat.set(None)
+        validate_refmat_upload(generation, dict(files[0]), {
+            "name": str(input.refmat_upload_name()), "species": str(input.refmat_upload_species()),
+            "tissue": str(input.refmat_upload_tissue()),
+            "normalization": str(input.refmat_upload_normalization()),
+        })
+
+    @reactive.effect
+    @reactive.event(validate_refmat_upload.status)
+    def finish_custom_refmat_upload() -> None:
+        if validate_refmat_upload.status() != "success":
+            return
+        generation, reference, error = validate_refmat_upload.result()
+        if generation != refmat_upload_generation.get() or error:
+            return
+        uploaded_refmat.set(reference)
+        ui.update_text("refmat_search", value="", session=session)
+
+    @output
+    @render.ui
+    def refmat_upload_status() -> ui.TagChild:
+        if validate_refmat_upload.status() == "running":
+            return ui.p("Validating uploaded matrix…")
+        if validate_refmat_upload.status() == "success":
+            generation, reference, error = validate_refmat_upload.result()
+            if generation == refmat_upload_generation.get():
+                if error:
+                    return ui.p(error, class_="text-danger")
+                return ui.p(
+                    f"Ready: {reference.summary.name}; {reference.metadata['gene_count']:,} "
+                            f"genes, {len(reference.summary.cell_types)} cell types.")
+        return ui.p("Choose a file, fill in any metadata, then validate it.")
+
+    def load_selected_refmat(ref_id: str) -> LoadedReference:
+        selected = selected_refmat()
+        if selected is None or selected.reference_id != ref_id:
+            raise ValueError("Select a valid reference before running annotation.")
+        uploaded = uploaded_refmat.get()
+        if uploaded is not None and uploaded.summary.reference_id == ref_id:
+            return uploaded
+        return reference_provider.load_reference(ref_id)
+
+    @reactive.calc
+    def filtered_refmats() -> list[Any]:
+        if input.refmat_source() == "upload":
+            uploaded = uploaded_refmat.get()
+            references = [uploaded.summary] if uploaded else []
+        else:
+            references = reference_provider.list_references(ReferenceFilters())
+        return search_references(references, str(input.refmat_search()))
+
+    @reactive.effect
+    def update_refmat_choices() -> None:
+        try:
+            references = filtered_refmats()
+        except Exception:
+            references = []
+        choices = {item.reference_id: reference_label(item) for item in references}
+        with reactive.isolate():
+            selected = str(input.annotation_reference_id())
+        ui.update_select(
+            "annotation_reference_id", choices=choices,
+            selected=selected if selected in choices else next(iter(choices), ""), session=session,
+        )
+
+    @output
+    @render.ui
+    def refmat_search_status() -> ui.TagChild:
+        try:
+            count = len(filtered_refmats())
+            return ui.p(
+                f"{count} reference(s) match. Search includes metadata and cell-type names."
+            )
+        except Exception as exc:
+            return ui.p(str(exc), class_="text-warning")
+
+    @reactive.calc
+    def selected_refmat() -> Any:
+        return next((item for item in filtered_refmats()
+                     if item.reference_id == str(input.annotation_reference_id())), None)
+
+    @output
+    @render.ui
+    def refmat_details() -> ui.TagChild:
+        ref = selected_refmat()
+        if ref is None:
+            return ui.p("No reference selected. Clear or change the search to find references.")
+        metadata = ref.metadata
+        values = {
+            "Species": ref.species, "Tissue": ref.tissue, "Condition": ref.disease,
+            "Developmental stage": metadata.get("developmental_stage"),
+            "Assay": ref.assay, "Platform": ref.platform,
+            "Genes": metadata.get("row_count", metadata.get("gene_count")),
+            "Cell types": len(ref.cell_types) or None,
+            "Gene identifiers": metadata.get("feature_id_type"),
+            "Expression values": metadata.get("value_type"),
+            "Normalization": metadata.get("normalization"),
+            "Matrix construction": metadata.get("construction_method"),
+            "Cells / samples / donors": " / ".join(
+                str(metadata.get(key) or "Not provided")
+                for key in ("cell_count", "sample_count", "donor_count")
+            ),
+            "Source study": metadata.get("source_title"),
+            "Citation": metadata.get("citation"),
+            "Publication year": metadata.get("publication_year"),
+            "Submitter": metadata.get("submitter"), "License": metadata.get("data_license"),
+            "Intended use": metadata.get("intended_use"),
+            "Limitations": metadata.get("limitations"),
+            "Notes": metadata.get("notes"), "Reference ID": ref.reference_id,
+            "Reference version": metadata.get("reference_version"),
+            "Catalog version": ref.resource_version, "Updated": metadata.get("updated_at"),
+        }
+        links = []
+        for label, url in (
+            ("Source", metadata.get("source_url")),
+            ("DOI", "https://doi.org/" + str(metadata["doi"]) if metadata.get("doi") else None),
+            ("PubMed", "https://pubmed.ncbi.nlm.nih.gov/" + str(metadata["pmid"])
+             if metadata.get("pmid") else None),
+        ):
+            if url and urlparse(str(url)).scheme in {"http", "https"}:
+                links.append(ui.a(label, href=str(url), target="_blank", rel="noopener noreferrer"))
+        return ui.div(
+            ui.h4(ref.name), ui.p(str(metadata.get("description") or "No description provided.")),
+            ui.tags.details(ui.tags.summary("Study, processing, and provenance details"),
+            ui.tags.dl(*(ui.div(ui.tags.dt(label), ui.tags.dd(str(value) if value is not None
+                                                          and str(value) else "Not provided"))
+                         for label, value in values.items())),
+            ),
+            ui.div(*[ui.span(link, " ") for link in links]),
+        )
+
+    @output
+    @render.data_frame
+    def refmat_cell_types() -> Any:
+        ref = selected_refmat()
+        table = cell_type_table(ref, str(input.refmat_cell_search())) if ref else pd.DataFrame()
+        return render.DataGrid(table, filters=True, height="300px")
+
+    refmat_generation = reactive.Value(0)
+
+    @reactive.extended_task
+    async def inspect_refmat(
+        generation: int, ref_id: str, genes: tuple[str, ...], uploaded: LoadedReference | None,
+    ) -> Any:
+        def inspect() -> Any:
+            try:
+                reference = (uploaded if uploaded and uploaded.summary.reference_id == ref_id
+                             else reference_provider.load_reference(ref_id))
+                matches = reference_compatibility(reference, genes) if genes else pd.DataFrame()
+                return generation, reference, matches, None
+            except Exception as exc:
+                return generation, None, pd.DataFrame(), str(exc)
+        return await asyncio.to_thread(inspect)
+
+    session.on_ended(inspect_refmat.cancel)
+
+    @reactive.effect
+    @reactive.event(input.annotation_reference_id, configuration_revision, uploaded_refmat)
+    def inspect_selected_refmat() -> None:
+        inspect_refmat.cancel()
+        reference_annotation_result.set(None)
+        reference_annotation_error.set(None)
+        reference_annotation_applied.set(False)
+        generation = refmat_generation.get() + 1
+        refmat_generation.set(generation)
+        if not input.annotation_reference_id():
+            return
+        current = workspace.get()
+        genes: tuple[str, ...] = ()
+        if current is not None:
+            _, names = expression_matrix(current.adata, current.expression_source)
+            genes = tuple(names.astype(str))
+        inspect_refmat(
+            generation, str(input.annotation_reference_id()), genes, uploaded_refmat.get(),
+        )
+
+    def current_refmat_inspection() -> Any:
+        if inspect_refmat.status() != "success":
+            return None
+        result = inspect_refmat.result()
+        return result if result[0] == refmat_generation.get() else None
+
+    @output
+    @render.ui
+    def refmat_compatibility_status() -> ui.TagChild:
+        if selected_refmat() is None:
+            return ui.div()
+        result = current_refmat_inspection()
+        if result is None:
+            return ui.p("Validating reference and checking compatibility…")
+        _, ref, matches, error = result
+        if error:
+            return ui.p(error, class_="text-warning")
+        header = f"Validated {ref.metadata['gene_count']:,} genes and " \
+                 f"{len(ref.metadata['cell_types'])} cell types."
+        if matches.empty:
+            return ui.p(header + " Load and configure a dataset to check gene compatibility.")
+        species_message = "Dataset species could not be detected confidently."
+        current = workspace.get()
+        if current is not None:
+            _, names = expression_matrix(current.adata, current.expression_source)
+            try:
+                species = detect_species(config.gene_set_cache_root, tuple(names.astype(str)))
+                reference_species = str(ref.metadata.get("species_common_name") or
+                                        ref.summary.species).casefold()
+                expected = ("mouse" if reference_species in {"mouse", "mus musculus", "mus mus"}
+                            else "human" if reference_species in {"human", "homo sapiens"}
+                            else None)
+                species_message = (f"Dataset species detected: {species}. "
+                                   f"Reference: {ref.summary.species}.")
+                if expected and expected != species:
+                    species_message += (
+                        " Species mismatch: choose a reference for your dataset species."
+                    )
+            except EnrichmentError:
+                pass
+        shared = int((matches["Match"] == "Shared").sum())
+        missing = int((matches["Match"] == "Missing from dataset").sum())
+        ambiguous = int((matches["Match"] == "Ambiguous").sum())
+        return ui.div(
+            ui.p(header), ui.p(species_message),
+            ui.p(
+                f"{shared:,}/{len(matches):,} reference genes shared "
+                 f"({shared / len(matches):.2%}); "
+                 f"{missing:,} missing; {ambiguous:,} ambiguous."),
+            ui.p("Uses the same exact / unique case-insensitive gene matching as annotation. "
+                 "Symbol overlap does not establish species compatibility "
+                 "or perform ortholog conversion."),
+        )
+
+    @output
+    @render.data_frame
+    def refmat_gene_matches() -> Any:
+        result = current_refmat_inspection()
+        table = result[2] if result and not result[3] else pd.DataFrame()
+        return render.DataGrid(table, filters=True, height="300px")
+
     @output
     @render.ui
     def reference_controls() -> ui.TagChild:
@@ -1886,7 +2219,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.input_select(
                 "reference_id",
                 "Reference",
-                {item.reference_id: item.name for item in references},
+                {item.reference_id: reference_label(item) for item in references},
             ),
             ui.input_action_button("validate_reference", "Validate reference"),
             col_widths=(8, 4),
@@ -1942,12 +2275,13 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             references = reference_provider.list_references(ReferenceFilters())
         except Exception as exc:
             return ui.div(str(exc), class_="alert alert-warning")
-        return ui.layout_columns(
+        return ui.div(
             ui.input_select(
                 "annotation_reference_id",
                 "Reference",
-                {item.reference_id: item.name for item in references},
+                {item.reference_id: reference_label(item) for item in references},
             ),
+            ui.layout_columns(
             ui.input_select(
                 "reference_method",
                 "Similarity",
@@ -1973,7 +2307,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             ui.input_action_button(
                 "run_reference_annotation", "Run annotation", class_="btn-primary"
             ),
-            col_widths=(3, 2, 2, 2, 3, 3),
+            col_widths=(2, 3, 2, 3, 2),
+            ),
         )
 
     @reactive.effect
@@ -1987,7 +2322,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         with ui.Progress(min=0, max=1, session=session) as progress:
             progress.set(0.15, message="Validating reference and gene overlap")
             try:
-                reference = reference_provider.load_reference(str(input.annotation_reference_id()))
+                reference = load_selected_refmat(str(input.annotation_reference_id()))
                 parameters = ReferenceAnnotationParameters(
                     compute_method=str(input.reference_method()),
                     minimum_gene_overlap=int(input.reference_min_overlap()),

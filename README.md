@@ -216,8 +216,8 @@ similarity matrix and best-call preview. Nothing changes in annotation state unt
 reference is synthetic and intended only to test the workflow with
 `testdata/clustbuster-demo.h5ad`.
 
-The adapter is pinned to pyclustifyr revision
-`db8761a87072b814f95ce7e0767540b4d10689bd`; API findings and current limitations
+The adapter uses pyclustifyr **1.0.0** (release `v1.0.0`), pinned to revision
+`ea5ee58ac3702d49ab873b65691513996b2d2cb0`; API findings and current limitations
 are recorded in `docs/research/pyclustifyr.md`.
 
 ## Online and offline enrichment
@@ -269,3 +269,8 @@ use gene symbols as expression-source gene names. The offline engine
 reports raw and adjusted p-values, odds ratios, overlap genes and counts, and query,
 term, and background sizes. Enrichr's combined score is not calculated offline and is
 omitted from offline result tables. Mode/source labels remain attached to results.
+
+Refmat discovery now supports metadata and cell-type search, descriptive dropdown
+labels, study/processing details, cell-type coverage, and dataset gene compatibility.
+See [Refmat metadata guidance](docs/REFMAT_METADATA.md) for supported database fields
+and the per-cell-type metadata format.

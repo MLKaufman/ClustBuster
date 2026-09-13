@@ -14,7 +14,7 @@ from clustbuster.core.annotations import ClusterIdentifier, PreviewedAnnotation
 from clustbuster.core.expression import expression_matrix
 from clustbuster.models import LoadedReference, Workspace
 
-PYCLUSTIFYR_REVISION = "db8761a87072b814f95ce7e0767540b4d10689bd"
+PYCLUSTIFYR_REVISION = "ea5ee58ac3702d49ab873b65691513996b2d2cb0"
 SUPPORTED_METHODS = ("spearman", "pearson", "cosine")
 
 
@@ -55,9 +55,9 @@ class ReferenceAnnotationResult:
 def _read_reference(reference: LoadedReference) -> pd.DataFrame:
     suffix = reference.matrix_path.suffix.casefold()
     if suffix == ".csv":
-        table = pd.read_csv(reference.matrix_path)
+        table = pd.read_csv(reference.matrix_path, keep_default_na=False)
     elif suffix in {".tsv", ".txt"}:
-        table = pd.read_csv(reference.matrix_path, sep="\t")
+        table = pd.read_csv(reference.matrix_path, sep="\t", keep_default_na=False)
     elif suffix == ".parquet":
         table = pd.read_parquet(reference.matrix_path)
     else:

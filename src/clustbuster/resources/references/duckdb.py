@@ -41,6 +41,13 @@ COLUMN_ALIASES = {
     "source_url": ("source_url",),
     "data_license": ("data_license",),
 }
+EXTRA_FIELDS = (
+    "description", "species_common_name", "developmental_stage", "feature_id_type",
+    "publication_year", "submitter", "notes", "created_at", "updated_at", "intended_use",
+    "limitations", "construction_method", "sample_count", "donor_count", "cell_count",
+    "cell_type_metadata", "taxonomy_id", "reference_version",
+)
+COLUMN_ALIASES.update({field: (field,) for field in EXTRA_FIELDS})
 REQUIRED_FIELDS = {"id", "name", "species", "filename", "sha256"}
 
 
@@ -124,7 +131,7 @@ class DuckDbReferenceProvider:
 
     def _rows(self, filters: ReferenceFilters | None = None) -> list[tuple[Any, ...]]:
         columns = self._schema()
-        fields = (
+        fields: tuple[str, ...] = (
             "id",
             "name",
             "species",
@@ -146,6 +153,7 @@ class DuckDbReferenceProvider:
             "source_url",
             "data_license",
         )
+        fields = (*fields, *EXTRA_FIELDS)
         clauses: list[str] = []
         parameters: list[str] = []
         if filters:
@@ -183,6 +191,13 @@ class DuckDbReferenceProvider:
             assay=str(row[5]) if row[5] else None,
             platform=str(row[6]) if row[6] else None,
             resource_version=self._configured_version or f"sha256:{str(row[8])[:12]}",
+            cell_types=tuple(str(name) for name in (row[11] or []) if str(name) != "gene"),
+            metadata={
+                **dict(zip(EXTRA_FIELDS, row[20:], strict=True)),
+                **dict(zip(("row_count", "column_count", "column_names", "normalization",
+                            "value_type", "source_title", "citation", "doi", "pmid",
+                            "source_url", "data_license"), row[9:20], strict=True)),
+            },
         )
 
     def list_references(self, filters: ReferenceFilters) -> list[ReferenceSummary]:
@@ -255,7 +270,7 @@ class DuckDbReferenceProvider:
             "source_url",
             "data_license",
         )
-        metadata = dict(zip(metadata_names, row, strict=True))
+        metadata = dict(zip((*metadata_names, *EXTRA_FIELDS), row, strict=True))
         metadata["gene_count"] = len(table)
         metadata["cell_types"] = reference_columns
         return LoadedReference(

@@ -269,7 +269,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "pandas", specifier = ">=2.2,<4" },
     { name = "plotly", specifier = ">=6.0,<7" },
-    { name = "pyclustifyr", git = "https://github.com/MLKaufman/pyclustifyr.git?rev=db8761a87072b814f95ce7e0767540b4d10689bd" },
+    { name = "pyclustifyr", git = "https://github.com/MLKaufman/pyclustifyr.git?rev=ea5ee58ac3702d49ab873b65691513996b2d2cb0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6,<8" },
     { name = "readseurat", specifier = "==0.1.0" },
@@ -1836,8 +1836,8 @@ wheels = [
 
 [[package]]
 name = "pyclustifyr"
-version = "0.1.0"
-source = { git = "https://github.com/MLKaufman/pyclustifyr.git?rev=db8761a87072b814f95ce7e0767540b4d10689bd#db8761a87072b814f95ce7e0767540b4d10689bd" }
+version = "1.0.0"
+source = { git = "https://github.com/MLKaufman/pyclustifyr.git?rev=ea5ee58ac3702d49ab873b65691513996b2d2cb0#ea5ee58ac3702d49ab873b65691513996b2d2cb0" }
 dependencies = [
     { name = "anndata" },
     { name = "matplotlib" },

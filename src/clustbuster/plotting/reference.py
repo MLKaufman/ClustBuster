@@ -56,11 +56,11 @@ def reference_correlation_figure(
             x=x_positions,
             y=y_positions,
             customdata=customdata,
-            colorscale="RdBu_r",
-            zmid=0,
-            zmin=-1,
+            colorscale="Viridis",
+            zmin=0,
             zmax=1,
-            colorbar={"title": result.parameters.compute_method.title()},
+            colorbar={"title": result.parameters.compute_method.title(),
+                      "tickvals": [0, 0.25, 0.5, 0.75, 1]},
             hovertemplate=(
                 "Cluster: %{customdata[0]}<br>Reference type: %{customdata[1]}"
                 "<br>Similarity: %{z:.3f}<extra></extra>"

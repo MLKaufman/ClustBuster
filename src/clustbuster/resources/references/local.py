@@ -76,6 +76,17 @@ class LocalReferenceProvider:
                 raise ProviderSchemaError(
                     f"Reference matrix escapes the configured directory: {reference_id}"
                 )
+            # Header-only discovery supports older sidecars without reading expression values.
+            if (not metadata.get("cell_types") and matrix_path.is_file()
+                    and matrix_path.suffix.casefold() in {".csv", ".tsv", ".txt"}):
+                try:
+                    header = pd.read_csv(
+                        matrix_path, sep="," if matrix_path.suffix.casefold() == ".csv" else "\t",
+                        nrows=0,
+                    )
+                    metadata["cell_types"] = [str(c) for c in header.columns if c != "gene"]
+                except (OSError, pd.errors.ParserError, ValueError):
+                    pass  # Validation reports the error when the reference is selected.
             metadata["_matrix_path"] = matrix_path
             records[reference_id] = metadata
         if not records:
@@ -94,6 +105,9 @@ class LocalReferenceProvider:
             assay=str(metadata.get("assay") or "") or None,
             platform=str(metadata.get("platform") or "") or None,
             resource_version=str(metadata["resource_version"]),
+            cell_types=tuple(str(name) for name in metadata.get("cell_types", [])
+                             if str(name) != "gene"),
+            metadata={key: value for key, value in metadata.items() if not key.startswith("_")},
         )
 
     def status(self) -> ProviderStatus:

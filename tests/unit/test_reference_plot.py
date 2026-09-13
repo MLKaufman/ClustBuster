@@ -39,6 +39,12 @@ def test_reference_heatmap_clusters_both_axes_and_labels_matrix_side() -> None:
     figure = reference_correlation_figure(result)
 
     assert figure.data[0].type == "heatmap"
+    assert figure.data[0].zmin == 0
+    assert figure.data[0].zmax == 1
+    assert figure.data[0].zmid is None
+    assert figure.data[0].colorscale[0] == (0.0, "#440154")
+    assert figure.data[0].colorscale[-1] == (1.0, "#fde725")
+    assert result.correlations.iloc[0, 2] == -0.2
     assert sum(trace.mode == "lines" for trace in figure.data[1:]) == 2
     assert figure.layout.height == reference_correlation_height(3)
     assert figure.layout.yaxis2.showticklabels is False

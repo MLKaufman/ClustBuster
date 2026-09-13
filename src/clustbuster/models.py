@@ -185,6 +185,8 @@ class ReferenceSummary:
     assay: str | None = None
     platform: str | None = None
     resource_version: str | None = None
+    cell_types: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
